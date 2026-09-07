@@ -1,0 +1,25 @@
+node_modules/
+dist/
+.env
+.env.local
+
+# Runtime data. Never commit these: uploads/ holds the images that were
+# actually uploaded, data/ holds the database.
+server/data/
+server/uploads/
+
+# server/demo-images/ IS committed on purpose. Free hosting wipes the disk on
+# every restart, so those images are the only thing the deployed demo can
+# re-seed itself from. They must be public-dataset images (APTOS 2019 /
+# EyePACS) — never real patient photographs.
+
+# Model weights are large and are not source.
+ai/*.pth
+ai/__pycache__/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+.DS_Store
+*.log
