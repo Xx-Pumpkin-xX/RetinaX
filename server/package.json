@@ -1,0 +1,26 @@
+{
+  "name": "retinax-server",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node --watch --env-file-if-exists=.env server.js",
+    "start": "node server.js",
+    "seed": "node --env-file-if-exists=.env seed.js",
+    "seed:demo": "node --env-file-if-exists=.env seed-demo.js --force",
+    "precompute": "node --env-file-if-exists=.env precompute-demo.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.7",
+    "express": "^4.21.1",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1"
+  },
+  "engines": {
+    "node": ">=20.12"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^13.0.3"
+  }
+}

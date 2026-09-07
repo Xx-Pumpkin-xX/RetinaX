@@ -1,0 +1,32 @@
+# Render blueprint for the API. Import this from the repo root.
+#
+# The free plan has an EPHEMERAL filesystem: the SQLite file and every uploaded
+# image disappear on restart. Two ways out, both below.
+services:
+  - type: web
+    name: retinax-api
+    runtime: node
+    rootDir: server
+    buildCommand: npm ci
+    startCommand: node server.js
+    envVars:
+      # Pin the runtime. The database driver is node:sqlite, which exists from
+      # Node 22.5 — an older default here would fall back to a native addon
+      # that has to compile during the build.
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: WEB_ORIGIN
+        sync: false          # set to your deployed front-end URL
+      - key: AI_URL
+        sync: false          # where the grading service runs
+      - key: SEED_DEMO
+        value: "1"           # re-seed demo cases on every boot
+    # Option A — pay for a persistent disk and data survives restarts:
+    # disk:
+    #   name: retinax-data
+    #   mountPath: /opt/render/project/src/server/data
+    #   sizeGB: 1

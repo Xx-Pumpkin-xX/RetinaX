@@ -1,0 +1,14 @@
+# Service dependencies only.
+#
+# torch and torchvision are deliberately NOT listed. On the DGX Spark (arm64,
+# Grace Blackwell) the right PyTorch build comes from NVIDIA's own container or
+# index, and `pip install torch` from the default index will either fail or
+# quietly install a build that cannot see the GPU — on top of the working one
+# that machine already has. Use the PyTorch that is already there.
+#
+# Check before starting:  python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+fastapi
+uvicorn[standard]
+python-multipart
+pillow
+numpy
