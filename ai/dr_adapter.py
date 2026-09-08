@@ -101,17 +101,27 @@ def preprocess(pil_image):
 _model = None
 _device = None
 _thresholds = None
+_thresholds_fitted = None   # True = from best_thresholds.npy, False = the fallback
 
 
 def load_thresholds():
-    """Nelder-Mead cut points from OptimizedRounder.fit()."""
-    global _thresholds
+    """Nelder-Mead cut points from OptimizedRounder.fit().
+
+    These are NOT in the checkpoint. The model is a regression head returning a
+    single continuous score; these four cut points turn that score into a grade,
+    and they were fitted separately after training. Falling back to the starting
+    guess [0.5, 1.5, 2.5, 3.5] does not break anything visibly — it just moves
+    every boundary, most damagingly 3.042 -> 3.5, which is the severe-NPDR/PDR
+    referral decision. So the fallback is reported in /health, not just logged.
+    """
+    global _thresholds, _thresholds_fitted
     if _thresholds is not None:
         return _thresholds
     try:
         t = np.load(THRESHOLD_PATH).astype(float).ravel().tolist()
         if len(t) == 4:
             _thresholds = t
+            _thresholds_fitted = True
             print(f"[thresholds] {THRESHOLD_PATH}: {t}")
             return t
         print(f"[thresholds] {THRESHOLD_PATH} has {len(t)} values, expected 4")
@@ -120,7 +130,9 @@ def load_thresholds():
     except Exception as e:
         print(f"[thresholds] could not read {THRESHOLD_PATH}: {e}")
     _thresholds = [0.5, 1.5, 2.5, 3.5]      # OptimizedRounder's initial_coef
-    print(f"[thresholds] falling back to {_thresholds} — REPLACE BEFORE REAL USE")
+    _thresholds_fitted = False
+    print(f"[thresholds] !! falling back to {_thresholds} — these are the UNFITTED "
+          f"starting values. Every grade will be miscalibrated. Set THRESHOLD_PATH.")
     return _thresholds
 
 
@@ -296,6 +308,11 @@ def health():
         "image_size": IMAGE_SIZE,
         "tta": USE_TTA,
         "thresholds": _thresholds,
+        # Unambiguous on purpose: "fallback" here means the grades are wrong,
+        # and nothing else in the response would tell you.
+        "thresholds_source": (None if _thresholds_fitted is None
+                              else "best_thresholds.npy" if _thresholds_fitted
+                              else "FALLBACK — UNFITTED, GRADES MISCALIBRATED"),
         # Surfaced so a demo-day "why is this slow" has an immediate answer.
         "on_cpu_fallback": _device is not None and _device.type == "cpu"
                            and not FORCE_CPU,
