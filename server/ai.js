@@ -7,6 +7,10 @@ const AI_URL = process.env.AI_URL || "http://127.0.0.1:8000";
 // The service may be behind a tunnel to a lab machine. A request that never
 // answers must not hold an upload open forever.
 const TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS || 45000);
+// CCEM fuses three explainers, one of which runs hundreds of masked forward
+// passes. It is minutes, not milliseconds, so it gets its own budget — the
+// upload timeout is deliberately short because an upload must not hang.
+const CCEM_TIMEOUT_MS = Number(process.env.AI_CCEM_TIMEOUT_MS || 600000);
 
 export const aiUrl = () => AI_URL;
 
@@ -31,7 +35,7 @@ export async function gradeImage(imageAbsPath, { ccem = false } = {}) {
   const res = await fetch(`${AI_URL}/infer${ccem ? "?ccem=true" : ""}`, {
     method: "POST",
     body: form,
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    signal: AbortSignal.timeout(ccem ? CCEM_TIMEOUT_MS : TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`AI service ${res.status}`);
 
@@ -50,4 +54,25 @@ export async function gradeImage(imageAbsPath, { ccem = false } = {}) {
     camPath: await save(out.heatmap_cam_png_base64),
     ccemPath: await save(out.heatmap_ccem_png_base64),
   };
+}
+
+
+/**
+ * Ask for the CCEM map of an image that already has a grade.
+ *
+ * Separate from gradeImage because the grade must not move: the doctor may
+ * already have agreed or disagreed with it, and re-running the model to get a
+ * picture would silently rewrite the number that decision was made against.
+ * The returned grade is checked against the stored one and otherwise ignored.
+ */
+export async function explainCcem(imageAbsPath, expectedGrade) {
+  const { grade, ccemPath } = await gradeImage(imageAbsPath, { ccem: true });
+  if (!ccemPath) throw new Error("The service returned no CCEM map");
+  if (expectedGrade != null && grade !== expectedGrade) {
+    // Same weights and deterministic preprocessing, so this should be
+    // impossible. If it ever happens, something changed underneath and the
+    // explanation would not be an explanation of the stored grade.
+    console.warn(`[ccem] grade drift: stored ${expectedGrade}, service now says ${grade}`);
+  }
+  return ccemPath;
 }

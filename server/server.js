@@ -7,7 +7,7 @@ import path from "node:path";
 import { openSync, readSync, closeSync } from "node:fs";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { db, GRADE_LABELS } from "./db.js";
-import { gradeImage } from "./ai.js";
+import { gradeImage, explainCcem } from "./ai.js";
 import { seedDemo } from "./seed-demo.js";
 import { seedDoctors } from "./seed.js";
 import { UPLOAD_DIR } from "./paths.js";
@@ -338,6 +338,39 @@ app.post("/api/cases/:id/regrade", auth, async (req, res) => {
     console.error("re-grading failed:", err.message);
     db.prepare("UPDATE cases SET Status = 'FAILED' WHERE CaseID = ?").run(req.params.id);
     return res.status(502).json({ error: "The grading service still did not answer" });
+  }
+
+  const updated = ownCase(req.params.id, req.doctorId);
+  res.json({ ...caseRow(updated), reviews: reviewHistory(req.params.id) });
+});
+
+/**
+ * Compute the CCEM map for a case that already has one.
+ *
+ * On demand rather than on upload. CCEM fuses Grad-CAM++, Ada-SISE and
+ * SmoothIG and takes minutes on a GPU; running it inside the upload request
+ * would mean every doctor waits for an explanation most of them will not open.
+ * So the upload gets Grad-CAM++, and the fused map is a thing you ask for.
+ *
+ * The stored grade is never touched — see explainCcem.
+ */
+app.post("/api/cases/:id/explain", auth, async (req, res) => {
+  const row = ownCase(req.params.id, req.doctorId);
+  if (!row) return res.status(404).json({ error: "Case not found" });
+  if (row.Grade == null) {
+    return res.status(409).json({ error: "This case has no grade to explain yet" });
+  }
+  if (row.HeatmapCcemPath) {
+    return res.json({ ...caseRow(row), reviews: reviewHistory(row.CaseID) });
+  }
+
+  try {
+    const ccemPath = await explainCcem(path.resolve(row.ImagePath), row.Grade);
+    db.prepare("UPDATE predictions SET HeatmapCcemPath = ? WHERE CaseID = ?")
+      .run(ccemPath, req.params.id);
+  } catch (err) {
+    console.error("ccem failed:", err.message);
+    return res.status(502).json({ error: `The grading service could not produce CCEM: ${err.message}` });
   }
 
   const updated = ownCase(req.params.id, req.doctorId);

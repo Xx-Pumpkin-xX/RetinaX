@@ -170,15 +170,37 @@ def predict(img: Image.Image, want_ccem: bool):
     return grade, cam, ccem
 
 
+# Below this the map is treated as background and drawn fully transparent.
+# Without a floor, a weak activation across the whole retina is painted as a
+# faint wash, and the photograph underneath — the thing the doctor is actually
+# reading — is veiled everywhere at once.
+HEATMAP_FLOOR = float(os.environ.get("HEATMAP_FLOOR", 0.35))
+HEATMAP_MAX_ALPHA = float(os.environ.get("HEATMAP_MAX_ALPHA", 0.85))
+
+
 def cam_to_png(cam, size) -> str | None:
-    """Turn a 0..1 activation map into a transparent RGBA overlay PNG."""
+    """Turn a 0..1 activation map into a transparent RGBA overlay PNG.
+
+    Cyan through violet to magenta, not the usual red-yellow heat ramp.
+    A fundus photograph is orange: a warm overlay on a warm image is the one
+    colour choice guaranteed to be hard to read, and worse for the roughly
+    1 in 12 men with a red-green deficiency. Blue-magenta is the complement of
+    retinal orange, so the activation separates from the tissue instead of
+    blending into it.
+    """
     if cam is None:
         return None
     cam = np.clip(np.asarray(cam, dtype=np.float32), 0.0, 1.0)
-    r = np.clip(1.6 * cam - 0.2, 0, 1)
-    g = np.clip(1.4 * cam - 0.5, 0, 1)
-    b = np.clip(0.5 - 1.5 * cam, 0, 1)
-    alpha = np.clip(cam * 1.15, 0, 1)
+
+    # Rescale so the floor becomes 0 and the peak stays 1 — the ramp then
+    # spends its whole range on activation that means something.
+    t = np.clip((cam - HEATMAP_FLOOR) / max(1e-6, 1.0 - HEATMAP_FLOOR), 0.0, 1.0)
+
+    r = t ** 1.5                              # arrives late: only the hottest goes magenta
+    g = np.clip(1.35 * (1.0 - t) - 0.15, 0, 1)  # cyan at the low end, gone by the middle
+    b = np.clip(0.55 + 0.45 * t, 0, 1)          # blue throughout, so nothing reads as warm
+    alpha = (t ** 0.85) * HEATMAP_MAX_ALPHA
+
     rgba = (np.dstack([r, g, b, alpha]) * 255).astype(np.uint8)
     out = Image.fromarray(rgba, mode="RGBA").resize(size, Image.BILINEAR)
     buf = io.BytesIO()

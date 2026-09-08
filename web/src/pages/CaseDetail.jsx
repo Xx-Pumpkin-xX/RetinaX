@@ -30,6 +30,8 @@ export default function CaseDetail() {
   const [formError, setFormError] = useState(null);
   const [regrading, setRegrading] = useState(false);
   const [amending, setAmending] = useState(false);
+  const [explaining, setExplaining] = useState(false);
+  const [explainError, setExplainError] = useState(null);
 
   useEffect(() => {
     let alive = true;
@@ -55,6 +57,20 @@ export default function CaseDetail() {
     load();
     return () => { alive = false; clearTimeout(timer); };
   }, [id]);
+
+  async function computeCcem() {
+    setExplaining(true);
+    setExplainError(null);
+    try {
+      const updated = await api.explain(id);
+      setCase(updated);
+      setOverlay("ccem");
+    } catch (err) {
+      setExplainError(err.message);
+    } finally {
+      setExplaining(false);
+    }
+  }
 
   async function regrade() {
     setRegrading(true);
@@ -147,10 +163,19 @@ export default function CaseDetail() {
               No explanation map was returned for this image.
             </div>
           )}
-          {available.length === 1 && available[0] === "cam" && (
-            <div className="muted" style={{ fontSize: 12.5, padding: "0 16px 12px" }}>
-              Grad-CAM++ only. CCEM fuses three explainers and is computed in a
-              batch run, not on upload.
+          {available.length === 1 && available[0] === "cam" && c.grade != null && (
+            <div className="stack" style={{ gap: 8, padding: "0 16px 14px" }}>
+              <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+                Grad-CAM++ only. CCEM fuses three explainers — Grad-CAM++,
+                Ada-SISE and SmoothIG — weighted by agreement, and takes a few
+                minutes on the GPU, so it is computed when you ask rather than
+                on every upload.
+              </div>
+              {explainError && <div className="err">{explainError}</div>}
+              <button className="btn btn-ghost" onClick={computeCcem} disabled={explaining}
+                      style={{ alignSelf: "flex-start" }}>
+                {explaining ? "Computing CCEM… (this takes a few minutes)" : "Compute CCEM"}
+              </button>
             </div>
           )}
         </div>
