@@ -181,12 +181,12 @@ HEATMAP_MAX_ALPHA = float(os.environ.get("HEATMAP_MAX_ALPHA", 0.85))
 def cam_to_png(cam, size) -> str | None:
     """Turn a 0..1 activation map into a transparent RGBA overlay PNG.
 
-    Cyan through violet to magenta, not the usual red-yellow heat ramp.
-    A fundus photograph is orange: a warm overlay on a warm image is the one
-    colour choice guaranteed to be hard to read, and worse for the roughly
-    1 in 12 men with a red-green deficiency. Blue-magenta is the complement of
-    retinal orange, so the activation separates from the tissue instead of
-    blending into it.
+    Green, not the usual red-yellow heat ramp. A fundus photograph is orange:
+    a warm overlay on a warm image is the one colour choice guaranteed to be
+    hard to read. Green sits opposite orange on the wheel, so the activation
+    separates from the tissue instead of blending into it, and intensity is
+    carried by brightness as well as alpha — which keeps the map legible in a
+    greyscale print of the report.
     """
     if cam is None:
         return None
@@ -196,9 +196,10 @@ def cam_to_png(cam, size) -> str | None:
     # spends its whole range on activation that means something.
     t = np.clip((cam - HEATMAP_FLOOR) / max(1e-6, 1.0 - HEATMAP_FLOOR), 0.0, 1.0)
 
-    r = t ** 1.5                              # arrives late: only the hottest goes magenta
-    g = np.clip(1.35 * (1.0 - t) - 0.15, 0, 1)  # cyan at the low end, gone by the middle
-    b = np.clip(0.55 + 0.45 * t, 0, 1)          # blue throughout, so nothing reads as warm
+    # deep green -> bright green -> pale green at the peak
+    r = np.clip(t ** 2.2, 0, 1) * 0.75          # arrives late; only the hottest pales out
+    g = np.clip(0.35 + 0.65 * t, 0, 1)          # green throughout, brightening with activation
+    b = np.clip(t ** 2.0, 0, 1) * 0.55          # a touch of blue at the top, never warm
     alpha = (t ** 0.85) * HEATMAP_MAX_ALPHA
 
     rgba = (np.dstack([r, g, b, alpha]) * 255).astype(np.uint8)
