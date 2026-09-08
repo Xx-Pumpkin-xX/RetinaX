@@ -58,21 +58,30 @@ export async function gradeImage(imageAbsPath, { ccem = false } = {}) {
 
 
 /**
- * Ask for the CCEM map of an image that already has a grade.
+ * Redraw the explanation maps for an image that already has a grade.
+ *
+ * `ccem: false` runs Grad-CAM++ only — one backward pass, a second or two —
+ * which is what you want when the renderer changed and the pictures are stale.
+ * `ccem: true` also runs the fusion, which is minutes.
  *
  * Separate from gradeImage because the grade must not move: the doctor may
  * already have agreed or disagreed with it, and re-running the model to get a
  * picture would silently rewrite the number that decision was made against.
  * The returned grade is checked against the stored one and otherwise ignored.
  */
-export async function explainCcem(imageAbsPath, expectedGrade) {
-  const { grade, ccemPath } = await gradeImage(imageAbsPath, { ccem: true });
-  if (!ccemPath) throw new Error("The service returned no CCEM map");
+export async function explain(imageAbsPath, expectedGrade, { ccem = true } = {}) {
+  const { grade, camPath, ccemPath } = await gradeImage(imageAbsPath, { ccem });
+  if (ccem && !ccemPath) throw new Error("The service returned no CCEM map");
+  if (!camPath && !ccemPath) throw new Error("The service returned no explanation map");
   if (expectedGrade != null && grade !== expectedGrade) {
     // Same weights and deterministic preprocessing, so this should be
     // impossible. If it ever happens, something changed underneath and the
     // explanation would not be an explanation of the stored grade.
     console.warn(`[ccem] grade drift: stored ${expectedGrade}, service now says ${grade}`);
   }
-  return ccemPath;
+  // Both maps come back from the one response, so both are returned. A stored
+  // heatmap is a rendered picture: change how the service draws them and the
+  // old files do not repaint themselves, which is why redrawing has to be
+  // something a doctor can ask for.
+  return { camPath, ccemPath };
 }

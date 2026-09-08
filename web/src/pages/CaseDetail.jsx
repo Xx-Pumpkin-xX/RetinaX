@@ -30,7 +30,7 @@ export default function CaseDetail() {
   const [formError, setFormError] = useState(null);
   const [regrading, setRegrading] = useState(false);
   const [amending, setAmending] = useState(false);
-  const [explaining, setExplaining] = useState(false);
+  const [explaining, setExplaining] = useState(false); // false | "cam" | "ccem"
   const [explainError, setExplainError] = useState(null);
 
   useEffect(() => {
@@ -58,13 +58,13 @@ export default function CaseDetail() {
     return () => { alive = false; clearTimeout(timer); };
   }, [id]);
 
-  async function computeCcem() {
-    setExplaining(true);
+  async function redraw({ ccem }) {
+    setExplaining(ccem ? "ccem" : "cam");
     setExplainError(null);
     try {
-      const updated = await api.explain(id);
+      const updated = await api.explain(id, { ccem });
       setCase(updated);
-      setOverlay("ccem");
+      setOverlay(ccem ? "ccem" : "cam");
     } catch (err) {
       setExplainError(err.message);
     } finally {
@@ -163,19 +163,27 @@ export default function CaseDetail() {
               No explanation map was returned for this image.
             </div>
           )}
-          {available.length === 1 && available[0] === "cam" && c.grade != null && (
+          {c.grade != null && (
             <div className="stack" style={{ gap: 8, padding: "0 16px 14px" }}>
               <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
-                Grad-CAM++ only. CCEM fuses three explainers — Grad-CAM++,
-                Ada-SISE and SmoothIG — weighted by agreement, and takes a few
-                minutes on the GPU, so it is computed when you ask rather than
-                on every upload.
+                {available.includes("ccem")
+                  ? "CCEM fuses Grad-CAM++, Ada-SISE and SmoothIG, weighted by agreement. Redrawing re-renders the overlay from the current model without changing the grade."
+                  : "Grad-CAM++ only. CCEM fuses three explainers — Grad-CAM++, Ada-SISE and SmoothIG — weighted by agreement, and takes a few minutes on the GPU, so it is computed when you ask rather than on every upload."}
               </div>
               {explainError && <div className="err">{explainError}</div>}
-              <button className="btn btn-ghost" onClick={computeCcem} disabled={explaining}
-                      style={{ alignSelf: "flex-start" }}>
-                {explaining ? "Computing CCEM… (this takes a few minutes)" : "Compute CCEM"}
-              </button>
+              <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
+                <button className="btn btn-ghost" onClick={() => redraw({ ccem: false })}
+                        disabled={Boolean(explaining)}
+                        title="Re-runs Grad-CAM++ and redraws the overlay. The grade is not recomputed.">
+                  {explaining === "cam" ? "Redrawing…" : "Redraw overlay"}
+                </button>
+                <button className="btn btn-ghost" onClick={() => redraw({ ccem: true })}
+                        disabled={Boolean(explaining)}>
+                  {explaining === "ccem"
+                    ? "Computing… (a few minutes)"
+                    : available.includes("ccem") ? "Recompute CCEM" : "Compute CCEM"}
+                </button>
+              </div>
             </div>
           )}
         </div>
