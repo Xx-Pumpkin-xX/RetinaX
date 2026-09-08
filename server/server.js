@@ -49,6 +49,28 @@ function auth(req, res, next) {
   }
 }
 
+/**
+ * One place that knows how the session cookie is built, because login and
+ * sign-up must agree. "Keep me signed in" only lengthens its life — never
+ * permanent, since this account can read fundus images.
+ *
+ * In dev the front end is proxied, so the cookie is same-site. In production
+ * the API is on another domain, and a cross-site cookie is only accepted with
+ * SameSite=None *and* Secure. Getting this wrong is the classic "login works
+ * locally, fails once deployed".
+ */
+function issueSession(res, doctorId, keepSignedIn) {
+  const days = keepSignedIn ? 14 : 1;
+  const token = jwt.sign({ sub: doctorId }, SECRET, { expiresIn: `${days}d` });
+  const cross = process.env.NODE_ENV === "production";
+  res.cookie("rx", token, {
+    httpOnly: true,
+    sameSite: cross ? "none" : "lax",
+    secure: cross,
+    maxAge: days * 24 * 60 * 60 * 1000,
+  });
+}
+
 app.post("/api/login", (req, res) => {
   const { email, password, keepSignedIn } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: "Email and password are required" });
@@ -58,22 +80,52 @@ app.post("/api/login", (req, res) => {
     return res.status(401).json({ error: "Wrong email or password" });
   }
 
-  // "Keep me signed in" is only a longer cookie life. Never permanent:
-  // this account can read patient images.
-  const days = keepSignedIn ? 14 : 1;
-  const token = jwt.sign({ sub: doc.DoctorID }, SECRET, { expiresIn: `${days}d` });
-  // In dev the front end is proxied, so the cookie is same-site.
-  // In production the API is usually on another domain, and a cross-site
-  // cookie is only accepted with SameSite=None *and* Secure. Getting this
-  // wrong is the classic "login works locally, fails once deployed".
-  const cross = process.env.NODE_ENV === "production";
-  res.cookie("rx", token, {
-    httpOnly: true,
-    sameSite: cross ? "none" : "lax",
-    secure: cross,
-    maxAge: days * 24 * 60 * 60 * 1000,
-  });
+  issueSession(res, doc.DoctorID, keepSignedIn);
   res.json({ id: doc.DoctorID, fullName: doc.FullName });
+});
+
+/* --------------------------------------------------------------- sign up --- */
+
+// Open sign-up, deliberately: this is a competition demo and anyone should be
+// able to try it. BR-1 is what makes that safe — a doctor only ever sees cases
+// where DoctorID is their own, so a new account starts with a view of nothing
+// but its own work.
+//
+// This is a DEMO decision and the report should say so. A screening tool a
+// hospital actually ran would provision accounts, not let the internet join.
+app.post("/api/signup", async (req, res) => {
+  const fullName = String(req.body?.fullName || "").trim();
+  const email = String(req.body?.email || "").toLowerCase().trim();
+  const password = String(req.body?.password || "");
+
+  if (!fullName || !email || !password) {
+    return res.status(400).json({ error: "Name, email and password are all required" });
+  }
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return res.status(400).json({ error: "That does not look like an email address" });
+  }
+  if (password.length < 8) {
+    return res.status(400).json({ error: "Use at least 8 characters" });
+  }
+
+  const taken = db.prepare("SELECT 1 FROM doctors WHERE Email = ?").get(email);
+  if (taken) return res.status(409).json({ error: "That email already has an account" });
+
+  const id = randomUUID();
+  db.prepare(
+    `INSERT INTO doctors (DoctorID, FullName, Email, PasswordHash, CreatedAt)
+     VALUES (?,?,?,?,?)`
+  ).run(id, fullName, email, bcrypt.hashSync(password, 10), new Date().toISOString());
+
+  // Sign them straight in — making someone type the password again immediately
+  // after choosing it is friction with no security value.
+  issueSession(res, id, false);
+
+  // Give the new account its own copy of the demo cases. An empty worklist is a
+  // bad first impression, and it is the first thing a judge would see.
+  seedDemo({ doctorId: id }).catch((e) => console.warn("[signup] seeding failed:", e.message));
+
+  res.status(201).json({ id, fullName });
 });
 
 app.post("/api/logout", (req, res) => {

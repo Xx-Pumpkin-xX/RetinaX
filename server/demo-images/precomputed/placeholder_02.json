@@ -1,5 +1,4 @@
 {
   "grade": 2,
-  "cam": "placeholder_02-cam.png",
-  "ccem": "placeholder_02-ccem.png"
+  "heatmap": "placeholder_02.png"
 }

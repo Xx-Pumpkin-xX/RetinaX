@@ -12,3 +12,14 @@ uvicorn[standard]
 python-multipart
 pillow
 numpy
+
+# --- only needed when serving the real ProjectDR2026 model (DR_REPO set) -----
+# The research code imports these; the stand-in does not.
+#   albumentations   the validation transform
+#   opencv-python    crop_image_from_gray + apply_clahe
+#   timm             builds tf_efficientnet_b7_ns
+#   grad-cam         provides `pytorch_grad_cam`, wrapped by CompactGradCAMPlusPlus
+#   captum           Integrated Gradients + SmoothGrad, used by SmoothIG
+#
+# Install them alongside, not instead:
+#   pip install albumentations opencv-python timm grad-cam captum

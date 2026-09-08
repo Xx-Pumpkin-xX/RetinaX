@@ -7,6 +7,7 @@ const tokenFromUrl = () => new URLSearchParams(window.location.search).get("toke
 
 export default function Login({ onSignedIn, theme, onToggleTheme }) {
   const [view, setView] = useState(() => (tokenFromUrl() ? "reset" : "login"));
+  const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("quang@retinax.ai");
   const [password, setPassword] = useState("retinax123");
   const [keep, setKeep] = useState(true);
@@ -14,7 +15,19 @@ export default function Login({ onSignedIn, theme, onToggleTheme }) {
   const [note, setNote] = useState(null);
   const [busy, setBusy] = useState(false);
 
+  const DEMO = { email: "quang@retinax.ai", password: "retinax123" };
+
   function go(next) {
+    // The login tab is prefilled with the demo account so a judge can get in
+    // without typing. On the sign-up tab that prefill is nonsense — it would
+    // invite someone to register an address that already exists.
+    if (next === "signup") {
+      setEmail("");
+      setPassword("");
+    } else if (next === "login" && !email && !password) {
+      setEmail(DEMO.email);
+      setPassword(DEMO.password);
+    }
     setView(next);
     setError(null);
     setNote(null);
@@ -46,6 +59,11 @@ export default function Login({ onSignedIn, theme, onToggleTheme }) {
     });
   };
 
+  const submitSignup = (e) => {
+    e.preventDefault();
+    run(async () => onSignedIn(await api.signup(fullName, email, password)));
+  };
+
   const submitReset = (e) => {
     e.preventDefault();
     run(async () => {
@@ -72,8 +90,50 @@ export default function Login({ onSignedIn, theme, onToggleTheme }) {
           </button>
         </div>
 
+        {(view === "login" || view === "signup") && (
+          <div className="card stack" style={{ padding: 0, gap: 0, overflow: "hidden" }}>
+            <div className="seg" style={{ border: "none", borderRadius: 0,
+                                          borderBottom: "1px solid var(--line)" }}>
+              <button type="button" style={{ flex: 1, height: 46 }}
+                      aria-pressed={view === "login"} onClick={() => go("login")}>Log in</button>
+              <button type="button" style={{ flex: 1, height: 46 }}
+                      aria-pressed={view === "signup"} onClick={() => go("signup")}>Sign up</button>
+            </div>
+
+        {view === "signup" && (
+          <form className="stack" style={{ padding: 26, gap: 16 }} onSubmit={submitSignup}>
+            <div className="stack" style={{ gap: 6 }}>
+              <label className="label" htmlFor="name">Full name</label>
+              <input id="name" className="input" value={fullName} placeholder="Dr. Nguyen Van A"
+                     onChange={(e) => setFullName(e.target.value)} autoComplete="name" required />
+            </div>
+            <div className="stack" style={{ gap: 6 }}>
+              <label className="label" htmlFor="su-email">Email</label>
+              <input id="su-email" className="input" type="email" value={email}
+                     onChange={(e) => setEmail(e.target.value)} autoComplete="username" required />
+            </div>
+            <div className="stack" style={{ gap: 6 }}>
+              <label className="label" htmlFor="su-password">Password</label>
+              <input id="su-password" className="input" type="password" value={password}
+                     onChange={(e) => setPassword(e.target.value)}
+                     autoComplete="new-password" required />
+              <div className="muted" style={{ fontSize: 12 }}>At least 8 characters.</div>
+            </div>
+
+            {error && <div className="err">{error}</div>}
+
+            <button className="btn" type="submit" disabled={busy}>
+              {busy ? "Creating your account…" : "Create account"}
+            </button>
+            <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+              Your worklist starts with a set of sample cases so you can try the
+              review flow straight away. You only ever see your own cases.
+            </div>
+          </form>
+        )}
+
         {view === "login" && (
-          <form className="card stack" style={{ padding: 26, gap: 16 }} onSubmit={submitLogin}>
+          <form className="stack" style={{ padding: 26, gap: 16 }} onSubmit={submitLogin}>
             <div className="stack" style={{ gap: 6 }}>
               <label className="label" htmlFor="email">Email</label>
               <input id="email" className="input" type="email" value={email}
@@ -101,6 +161,8 @@ export default function Login({ onSignedIn, theme, onToggleTheme }) {
               {busy ? "Signing in…" : "Log in"}
             </button>
           </form>
+        )}
+          </div>
         )}
 
         {view === "forgot" && (

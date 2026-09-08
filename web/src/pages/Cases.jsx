@@ -54,7 +54,31 @@ export default function Cases() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    api.cases().then(setCases).catch((e) => setError(e.message));
+    let alive = true;
+    let timer;
+
+    async function load() {
+      try {
+        const rows = await api.cases();
+        if (!alive) return;
+        setCases(rows);
+        // Seeding a new account happens in the background, and an upload sits
+        // in PROCESSING while the model runs. Without this the first thing a
+        // new user sees is one row saying "Grading…" that never changes until
+        // they think to refresh.
+        if (rows.some((c) => c.status === "PROCESSING")) {
+          timer = setTimeout(load, 2000);
+        }
+      } catch (e) {
+        if (alive) setError(e.message);
+      }
+    }
+
+    load();
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
   }, []);
 
   const waiting = cases?.filter((c) => c.status === "GRADED").length ?? 0;

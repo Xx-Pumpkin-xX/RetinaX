@@ -50,11 +50,23 @@ async function gradeOrFallback(destPath, file) {
   }
 }
 
-export async function seedDemo({ force = false } = {}) {
-  const count = db.prepare("SELECT COUNT(*) n FROM cases").get().n;
+/**
+ * @param {object}  opts
+ * @param {boolean} opts.force     seed even when this doctor already has cases
+ * @param {string}  opts.doctorId  whose worklist to fill; defaults to the
+ *                                 first seeded doctor. Sign-up passes the new
+ *                                 account, so a judge who registers lands on a
+ *                                 populated worklist instead of an empty page.
+ */
+export async function seedDemo({ force = false, doctorId = null } = {}) {
+  const count = doctorId
+    ? db.prepare("SELECT COUNT(*) n FROM cases WHERE DoctorID = ?").get(doctorId).n
+    : db.prepare("SELECT COUNT(*) n FROM cases").get().n;
   if (count > 0 && !force) return { skipped: true, count };
 
-  const doctor = db.prepare("SELECT DoctorID FROM doctors ORDER BY CreatedAt LIMIT 1").get();
+  const doctor = doctorId
+    ? { DoctorID: doctorId }
+    : db.prepare("SELECT DoctorID FROM doctors ORDER BY CreatedAt LIMIT 1").get();
   if (!doctor) {
     console.warn("[demo] no doctor yet — run `npm run seed` first");
     return { skipped: true };
