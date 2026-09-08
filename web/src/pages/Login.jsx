@@ -8,8 +8,8 @@ const tokenFromUrl = () => new URLSearchParams(window.location.search).get("toke
 export default function Login({ onSignedIn, theme, onToggleTheme }) {
   const [view, setView] = useState(() => (tokenFromUrl() ? "reset" : "login"));
   const [fullName, setFullName] = useState("");
-  const [email, setEmail] = useState("quang@retinax.ai");
-  const [password, setPassword] = useState("retinax123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [keep, setKeep] = useState(true);
   const [error, setError] = useState(null);
   const [note, setNote] = useState(null);
@@ -18,16 +18,11 @@ export default function Login({ onSignedIn, theme, onToggleTheme }) {
   const DEMO = { email: "quang@retinax.ai", password: "retinax123" };
 
   function go(next) {
-    // The login tab is prefilled with the demo account so a judge can get in
-    // without typing. On the sign-up tab that prefill is nonsense — it would
-    // invite someone to register an address that already exists.
-    if (next === "signup") {
-      setEmail("");
-      setPassword("");
-    } else if (next === "login" && !email && !password) {
-      setEmail(DEMO.email);
-      setPassword(DEMO.password);
-    }
+    // Switching tabs clears the fields. Carrying a half-typed sign-up address
+    // over to the login form, or the reverse, only ever produces a confusing
+    // error.
+    setEmail("");
+    setPassword("");
     setView(next);
     setError(null);
     setNote(null);
@@ -159,6 +154,15 @@ export default function Login({ onSignedIn, theme, onToggleTheme }) {
 
             <button className="btn" type="submit" disabled={busy}>
               {busy ? "Signing in…" : "Log in"}
+            </button>
+
+            {/* The form starts empty — a login screen that arrives with
+                someone's credentials already in it reads as a mock-up, not a
+                clinical tool. The demo account is still one click away, but
+                as a deliberate action. */}
+            <button type="button" className="linkish" style={{ alignSelf: "center", fontSize: 12.5 }}
+                    onClick={() => { setEmail(DEMO.email); setPassword(DEMO.password); setError(null); }}>
+              Use the demo account
             </button>
           </form>
         )}
