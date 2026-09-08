@@ -156,18 +156,19 @@ def predict(img: Image.Image, want_ccem: bool):
 
     if _model is None:
         grade, cam, ccem = _standin(img)
-        return grade, cam, (ccem if want_ccem else None)
+        # The stand-in draws over the whole frame; there is no crop.
+        return grade, cam, (ccem if want_ccem else None), None
 
     # ---- real path ------------------------------------------------------
     import dr_adapter
-    x, rgb = dr_adapter.preprocess(img)
+    x, rgb, box = dr_adapter.preprocess(img)
     grade = dr_adapter.score_to_grade(dr_adapter.predict_score(x))
 
     # Grad-CAM++ is one backward pass, so it always runs. CCEM is three
     # explainers and hundreds of passes, so it runs only when asked for.
     cam = dr_adapter.explain_gradcampp(x)
     ccem = dr_adapter.explain_ccem(x, rgb) if want_ccem else None
-    return grade, cam, ccem
+    return grade, cam, ccem, box
 
 
 # Below this the map is treated as background and drawn fully transparent.
@@ -178,7 +179,7 @@ HEATMAP_FLOOR = float(os.environ.get("HEATMAP_FLOOR", 0.35))
 HEATMAP_MAX_ALPHA = float(os.environ.get("HEATMAP_MAX_ALPHA", 0.85))
 
 
-def cam_to_png(cam, size) -> str | None:
+def cam_to_png(cam, size, box=None) -> str | None:
     """Turn a 0..1 activation map into a transparent RGBA overlay PNG.
 
     Green, not the usual red-yellow heat ramp. A fundus photograph is orange:
@@ -196,14 +197,29 @@ def cam_to_png(cam, size) -> str | None:
     # spends its whole range on activation that means something.
     t = np.clip((cam - HEATMAP_FLOOR) / max(1e-6, 1.0 - HEATMAP_FLOOR), 0.0, 1.0)
 
-    # deep green -> bright green -> pale green at the peak
-    r = np.clip(t ** 2.2, 0, 1) * 0.75          # arrives late; only the hottest pales out
-    g = np.clip(0.35 + 0.65 * t, 0, 1)          # green throughout, brightening with activation
-    b = np.clip(t ** 2.0, 0, 1) * 0.55          # a touch of blue at the top, never warm
+    # deep green -> bright green. Red is held down hard: let it climb and the
+    # peak turns yellow, which is both the wrong colour and the one that
+    # disappears against an orange fundus.
+    r = np.clip(t ** 3.0, 0, 1) * 0.22
+    g = np.clip(0.30 + 0.70 * t, 0, 1)          # green throughout, brightening with activation
+    b = np.clip(t ** 2.2, 0, 1) * 0.45          # a little blue at the peak, never warm
     alpha = (t ** 0.85) * HEATMAP_MAX_ALPHA
 
     rgba = (np.dstack([r, g, b, alpha]) * 255).astype(np.uint8)
-    out = Image.fromarray(rgba, mode="RGBA").resize(size, Image.BILINEAR)
+    layer = Image.fromarray(rgba, mode="RGBA")
+
+    if box is None:
+        out = layer.resize(size, Image.BILINEAR)
+    else:
+        # The map describes the cropped retina, so it is resized to the crop and
+        # pasted at the crop's offset on a fully transparent canvas the size of
+        # the original photograph. Resizing it straight to `size` — which is
+        # what this did before — stretches the retina's activation across the
+        # black border too, and every hotspot drifts outwards off the eye.
+        y0, y1, x0, x1 = box
+        out = Image.new("RGBA", size, (0, 0, 0, 0))
+        out.paste(layer.resize((x1 - x0, y1 - y0), Image.BILINEAR), (x0, y0))
+
     buf = io.BytesIO()
     out.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode()
@@ -237,7 +253,7 @@ async def infer(
     want_ccem = CCEM_ON_UPLOAD if ccem is None else ccem
     img = Image.open(io.BytesIO(await file.read())).convert("RGB")
     try:
-        grade, cam, ccem_map = predict(img, want_ccem)
+        grade, cam, ccem_map, box = predict(img, want_ccem)
     except Exception as e:
         # Say what actually broke in the response body. A bare "Internal Server
         # Error" means going to find the server's terminal and scrolling, which
@@ -256,6 +272,6 @@ async def infer(
         )
     return {
         "grade": int(grade),
-        "heatmap_cam_png_base64": cam_to_png(cam, img.size),
-        "heatmap_ccem_png_base64": cam_to_png(ccem_map, img.size),
+        "heatmap_cam_png_base64": cam_to_png(cam, img.size, box),
+        "heatmap_ccem_png_base64": cam_to_png(ccem_map, img.size, box),
     }
