@@ -171,39 +171,51 @@ def predict(img: Image.Image, want_ccem: bool):
     return grade, cam, ccem, box
 
 
-# Below this the map is treated as background and drawn fully transparent.
-# Without a floor, a weak activation across the whole retina is painted as a
-# faint wash, and the photograph underneath — the thing the doctor is actually
-# reading — is veiled everywhere at once.
-HEATMAP_FLOOR = float(os.environ.get("HEATMAP_FLOOR", 0.35))
+# How the activation map is painted.
+#
+#   jet    the palette used in the paper's figures — deep blue at the floor,
+#          through cyan and green, to yellow and red at the peak, covering the
+#          whole retina. A reader comparing the app against the figures should
+#          not have to translate between two colour schemes.
+#   green  transparent below the floor, green rising to the peak. Shows the
+#          photograph through the map, at the cost of matching the paper.
+#
+# The overlay's opacity is controlled by the doctor in the interface, so the
+# PNG is rendered at full strength and the blend happens there.
+HEATMAP_STYLE = os.environ.get("HEATMAP_STYLE", "jet").lower()
+HEATMAP_FLOOR = float(os.environ.get("HEATMAP_FLOOR", 0.35))      # 'green' only
 HEATMAP_MAX_ALPHA = float(os.environ.get("HEATMAP_MAX_ALPHA", 0.85))
 
 
-def cam_to_png(cam, size, box=None) -> str | None:
-    """Turn a 0..1 activation map into a transparent RGBA overlay PNG.
+def _jet(t):
+    """The standard jet ramp: dark blue -> cyan -> green -> yellow -> dark red."""
+    r = np.clip(np.minimum(4 * t - 1.5, -4 * t + 4.5), 0, 1)
+    g = np.clip(np.minimum(4 * t - 0.5, -4 * t + 3.5), 0, 1)
+    b = np.clip(np.minimum(4 * t + 0.5, -4 * t + 2.5), 0, 1)
+    return r, g, b
 
-    Green, not the usual red-yellow heat ramp. A fundus photograph is orange:
-    a warm overlay on a warm image is the one colour choice guaranteed to be
-    hard to read. Green sits opposite orange on the wheel, so the activation
-    separates from the tissue instead of blending into it, and intensity is
-    carried by brightness as well as alpha — which keeps the map legible in a
-    greyscale print of the report.
-    """
+
+def cam_to_png(cam, size, box=None) -> str | None:
+    """Turn a 0..1 activation map into an RGBA overlay PNG."""
     if cam is None:
         return None
     cam = np.clip(np.asarray(cam, dtype=np.float32), 0.0, 1.0)
 
-    # Rescale so the floor becomes 0 and the peak stays 1 — the ramp then
-    # spends its whole range on activation that means something.
-    t = np.clip((cam - HEATMAP_FLOOR) / max(1e-6, 1.0 - HEATMAP_FLOOR), 0.0, 1.0)
-
-    # deep green -> bright green. Red is held down hard: let it climb and the
-    # peak turns yellow, which is both the wrong colour and the one that
-    # disappears against an orange fundus.
-    r = np.clip(t ** 3.0, 0, 1) * 0.22
-    g = np.clip(0.30 + 0.70 * t, 0, 1)          # green throughout, brightening with activation
-    b = np.clip(t ** 2.2, 0, 1) * 0.45          # a little blue at the peak, never warm
-    alpha = (t ** 0.85) * HEATMAP_MAX_ALPHA
+    if HEATMAP_STYLE == "green":
+        # Rescale so the floor becomes 0 and the peak stays 1 — the ramp then
+        # spends its whole range on activation that means something.
+        t = np.clip((cam - HEATMAP_FLOOR) / max(1e-6, 1.0 - HEATMAP_FLOOR), 0.0, 1.0)
+        # Red is held down hard: let it climb and the peak turns yellow.
+        r = np.clip(t ** 3.0, 0, 1) * 0.22
+        g = np.clip(0.30 + 0.70 * t, 0, 1)
+        b = np.clip(t ** 2.2, 0, 1) * 0.45
+        alpha = (t ** 0.85) * HEATMAP_MAX_ALPHA
+    else:
+        # jet covers the whole map, so the low end is opaque blue rather than
+        # transparent — that is what produces the paper's look. The doctor's
+        # opacity control is what lets the photograph back through.
+        r, g, b = _jet(cam)
+        alpha = np.full_like(cam, 1.0)
 
     rgba = (np.dstack([r, g, b, alpha]) * 255).astype(np.uint8)
     layer = Image.fromarray(rgba, mode="RGBA")
