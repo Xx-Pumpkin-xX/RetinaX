@@ -3,6 +3,15 @@ dist/
 .env
 .env.local
 
+# Not source. Every one of these was committed by accident and had to be taken
+# back out: 35 MB of dataset images, a Windows installer, the desktop app's
+# own output folder, and two photographs from the running system. A repository
+# holds the code that produces the system, not the things the system produced.
+Claude outputs/
+*.zip
+*.exe
+*.tar.gz
+
 # Runtime data. Never commit these: uploads/ holds the images that were
 # actually uploaded, data/ holds the database.
 server/data/
