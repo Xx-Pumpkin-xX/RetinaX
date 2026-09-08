@@ -4,6 +4,7 @@ import multer from "multer";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import path from "node:path";
+import { openSync, readSync, closeSync } from "node:fs";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { db, GRADE_LABELS } from "./db.js";
 import { gradeImage } from "./ai.js";
@@ -33,7 +34,18 @@ app.use((req, res, next) => {
 });
 
 const upload = multer({
-  dest: UPLOAD_DIR,
+  // diskStorage rather than `dest`, only to keep the file extension.
+  // multer's dest mode writes a random name with no extension, so res.sendFile
+  // cannot infer a content type and answers application/octet-stream. A browser
+  // sniffs that and shows the picture anyway; a fetch that checks the type -
+  // which is how the images are loaded now - correctly refuses it.
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      cb(null, `${randomUUID()}${/^\.(jpe?g|png)$/.test(ext) ? ext : ".jpg"}`);
+    },
+  }),
   limits: { fileSize: 12 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ok = ["image/jpeg", "image/png"].includes(file.mimetype);
@@ -382,10 +394,36 @@ app.post("/api/cases/:id/mark", auth, (req, res) => {
 
 /* --------------------------------------------------------------- files --- */
 
+/**
+ * Set Content-Type from the file's magic bytes.
+ *
+ * Cases uploaded before the storage change above have no extension, so the
+ * name cannot be trusted. Two bytes of the file always can: an image served as
+ * application/octet-stream is refused by the client, which is the right
+ * behaviour there and the wrong outcome here.
+ */
+function sendImage(res, filePath) {
+  const abs = path.resolve(filePath);
+  let type = "application/octet-stream";
+  try {
+    const fd = openSync(abs, "r");
+    const head = Buffer.alloc(8);
+    readSync(fd, head, 0, 8, 0);
+    closeSync(fd);
+    if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) type = "image/jpeg";
+    else if (head.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])))
+      type = "image/png";
+  } catch {
+    return res.sendStatus(404);
+  }
+  res.type(type);
+  res.sendFile(abs);
+}
+
 app.get("/api/cases/:id/image", auth, (req, res) => {
   const row = ownCase(req.params.id, req.doctorId);
   if (!row) return res.sendStatus(404);
-  res.sendFile(path.resolve(row.ImagePath));
+  sendImage(res, row.ImagePath);
 });
 
 app.get("/api/cases/:id/heatmap/:method", auth, (req, res) => {
@@ -393,7 +431,7 @@ app.get("/api/cases/:id/heatmap/:method", auth, (req, res) => {
   if (!column) return res.status(400).json({ error: "Unknown explanation method" });
   const row = ownCase(req.params.id, req.doctorId);
   if (!row || !row[column]) return res.sendStatus(404);
-  res.sendFile(path.resolve(row[column]));
+  sendImage(res, row[column]);
 });
 
 /* ---------------------------------------------------------------- misc --- */
