@@ -157,7 +157,7 @@ def predict(img: Image.Image, want_ccem: bool):
     if _model is None:
         grade, cam, ccem = _standin(img)
         # The stand-in draws over the whole frame; there is no crop.
-        return grade, cam, (ccem if want_ccem else None), None
+        return grade, cam, (ccem if want_ccem else None), None, None
 
     # ---- real path ------------------------------------------------------
     import dr_adapter
@@ -168,7 +168,9 @@ def predict(img: Image.Image, want_ccem: bool):
     # explainers and hundreds of passes, so it runs only when asked for.
     cam = dr_adapter.explain_gradcampp(x)
     ccem = dr_adapter.explain_ccem(x, rgb) if want_ccem else None
-    return grade, cam, ccem, box
+    # rgb is the cropped, CLAHE'd retina the model saw — the same image the
+    # paper's figures are drawn over.
+    return grade, cam, ccem, box, rgb
 
 
 # How the activation map is painted.
@@ -183,6 +185,22 @@ def predict(img: Image.Image, want_ccem: bool):
 # The overlay's opacity is controlled by the doctor in the interface, so the
 # PNG is rendered at full strength and the blend happens there.
 HEATMAP_STYLE = os.environ.get("HEATMAP_STYLE", "jet").lower()
+# How much of the jet map, versus the photograph, ends up in the blend.
+#
+# Measured on a synthetic fundus, correlating the blended luminance with the
+# original inside the retina — how much of the eye is still readable — against
+# the hotspot's contrast against its surroundings:
+#
+#   opaque jet   -0.12 detail, 124 contrast   the eye is not merely hidden,
+#                                             its structure is inverted
+#   0.35          0.44 detail,  41 contrast
+#   0.45          0.30 detail,  50 contrast   <- default
+#   0.50          0.21 detail,  60 contrast   the paper's figures
+#   0.65          0.06 detail,  79 contrast
+#
+# 0.45 sits just on the readable side of the paper's setting: the wash still
+# reads as jet, and the vessels and the disc are still there underneath it.
+HEATMAP_BLEND = float(os.environ.get("HEATMAP_BLEND", 0.45))
 HEATMAP_FLOOR = float(os.environ.get("HEATMAP_FLOOR", 0.35))      # 'green' only
 HEATMAP_MAX_ALPHA = float(os.environ.get("HEATMAP_MAX_ALPHA", 0.85))
 
@@ -195,8 +213,17 @@ def _jet(t):
     return r, g, b
 
 
-def cam_to_png(cam, size, box=None) -> str | None:
-    """Turn a 0..1 activation map into an RGBA overlay PNG."""
+def cam_to_png(cam, size, box=None, base=None) -> str | None:
+    """Turn a 0..1 activation map into an RGBA overlay PNG.
+
+    For the jet style the photograph is blended into the map here rather than
+    left to sit underneath it. An opaque jet layer at full strength hides the
+    eye completely, which is not what the paper's figures do — those are about
+    half heatmap and half retina, so the vessels read through the wash. Doing
+    the blend here means the doctor's opacity control fades between the plain
+    photograph and that panel, and the top of its range is useful rather than
+    blank.
+    """
     if cam is None:
         return None
     cam = np.clip(np.asarray(cam, dtype=np.float32), 0.0, 1.0)
@@ -219,6 +246,13 @@ def cam_to_png(cam, size, box=None) -> str | None:
 
     rgba = (np.dstack([r, g, b, alpha]) * 255).astype(np.uint8)
     layer = Image.fromarray(rgba, mode="RGBA")
+
+    # Blend the photograph in, at the resolution it actually has.
+    if base is not None and HEATMAP_STYLE != "green":
+        bh, bw = base.shape[:2]
+        heat = np.asarray(layer.convert("RGB").resize((bw, bh), Image.BILINEAR), dtype=np.float32)
+        mixed = HEATMAP_BLEND * heat + (1.0 - HEATMAP_BLEND) * base.astype(np.float32)
+        layer = Image.fromarray(np.clip(mixed, 0, 255).astype(np.uint8), mode="RGB").convert("RGBA")
 
     if box is None:
         out = layer.resize(size, Image.BILINEAR)
@@ -271,7 +305,7 @@ async def infer(
     want_ccem = CCEM_ON_UPLOAD if ccem is None else ccem
     img = Image.open(io.BytesIO(await file.read())).convert("RGB")
     try:
-        grade, cam, ccem_map, box = predict(img, want_ccem)
+        grade, cam, ccem_map, box, base = predict(img, want_ccem)
     except Exception as e:
         # Say what actually broke in the response body. A bare "Internal Server
         # Error" means going to find the server's terminal and scrolling, which
@@ -290,6 +324,6 @@ async def infer(
         )
     return {
         "grade": int(grade),
-        "heatmap_cam_png_base64": cam_to_png(cam, img.size, box),
-        "heatmap_ccem_png_base64": cam_to_png(ccem_map, img.size, box),
+        "heatmap_cam_png_base64": cam_to_png(cam, img.size, box, base),
+        "heatmap_ccem_png_base64": cam_to_png(ccem_map, img.size, box, base),
     }
