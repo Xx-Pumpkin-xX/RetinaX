@@ -84,17 +84,51 @@ def build_transform():
     ])
 
 
+def gray_crop_box(rgb, tol=7):
+    """Where crop_image_from_gray cuts, in the ORIGINAL image's coordinates.
+
+    The repo's function returns the cropped array and not where it came from,
+    which is fine for training and wrong for us: an explanation map is computed
+    on the cropped retina and then has to be drawn back onto the photograph the
+    doctor is looking at. Without the offset the map is stretched across the
+    full frame, so every hotspot drifts outwards — visibly, off the retina and
+    into the black border.
+
+    Same rule as the repo's: keep the bounding box of everything brighter than
+    `tol` in grayscale.
+    """
+    import cv2
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    mask = gray > tol
+    if not mask.any():
+        return (0, rgb.shape[0], 0, rgb.shape[1])
+    rows = np.where(mask.any(axis=1))[0]
+    cols = np.where(mask.any(axis=0))[0]
+    return (int(rows[0]), int(rows[-1]) + 1, int(cols[0]), int(cols[-1]) + 1)
+
+
 def preprocess(pil_image):
-    """PIL RGB -> (1,3,H,W) tensor, and the RGB uint8 array CCEM needs."""
+    """PIL RGB -> (1,3,H,W) tensor, the RGB uint8 array CCEM needs, and the box
+    that array occupies in the original photograph."""
     import cv2  # noqa: F401  (imported by the repo's preprocessing module too)
     from preprocessing import crop_image_from_gray, apply_clahe
 
-    rgb = np.asarray(pil_image.convert("RGB"))   # already RGB, so no BGR swap
-    rgb = crop_image_from_gray(rgb)
+    full = np.asarray(pil_image.convert("RGB"))   # already RGB, so no BGR swap
+    rgb = crop_image_from_gray(full)
+
+    # Locate the crop rather than assume it. If our box does not reproduce the
+    # repo's crop exactly, fall back to the whole frame: a slightly misplaced
+    # overlay is a defect, but a confidently misplaced one is a lie.
+    box = gray_crop_box(full)
+    if rgb.shape[:2] != (box[1] - box[0], box[3] - box[2]):
+        print(f"[crop] box {box} does not match crop {rgb.shape[:2]} — "
+              f"placing the overlay over the full frame", flush=True)
+        box = (0, full.shape[0], 0, full.shape[1])
+
     rgb = apply_clahe(rgb)
 
     x = build_transform()(image=rgb)["image"].unsqueeze(0)
-    return x, rgb
+    return x, rgb, box
 
 
 # ------------------------------------------------------------------ MODEL --
