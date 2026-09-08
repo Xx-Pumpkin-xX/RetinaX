@@ -343,3 +343,72 @@ ai/        the grading service — the .pth, CAM and CCEM
 `README.md` explains the design. `DEPLOY.md` is for putting it on the internet.
 `TRACEABILITY.md` maps the UML diagrams to the code. `COMMITS.md` is the commit
 sequence for the team.
+
+---
+
+## Running the grading service on your own laptop
+
+The fallback for when the DGX Spark is not available. Everything the model needs
+is already on this machine — checked 8 September 2026:
+
+```
+D:\DR_project\project_backup\src\training\          model.py, preprocessing.py
+D:\DR_project\project_backup\src\xai\...\explainer\ gradcampp, adasise, smoothig
+D:\DR_project\project_backup\src\xai\CCEM\          ccem_core.py
+   ...\experiments\Stage2_Finetune_B7_CBAM\         stage2_best_model.pth (248 MB)
+                                                    best_thresholds.npy
+```
+
+That is exactly the layout `ai/dr_adapter.py` expects, so `DR_REPO` points at
+`project_backup` with no restructuring.
+
+**1 — check the GPU build of PyTorch.**
+
+```powershell
+cd D:\DR_project\RetinaX.ai\ai
+python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+```
+
+`False` means the CPU wheel is installed. It still works — `run_resilient()`
+falls back to CPU on its own — but B7 at 600 px takes tens of seconds per image
+instead of a few. Reinstall the CUDA build before demo day, not on the morning.
+
+**2 — the rest of the dependencies.**
+
+```powershell
+pip install timm opencv-python albumentations pillow numpy `
+            fastapi uvicorn python-multipart `
+            grad-cam captum scipy scikit-learn scikit-image
+```
+
+`captum`, `scipy`, `scikit-learn` and `scikit-image` are only needed for CCEM.
+Grad-CAM++ — the map produced on upload — needs `grad-cam` alone.
+
+**3 — run it.**
+
+```powershell
+$env:DR_REPO="D:\DR_project\project_backup"
+$env:MODEL_PATH="D:\DR_project\project_backup\src\experiments\Stage2_Finetune_B7_CBAM\stage2_best_model.pth"
+$env:THRESHOLD_PATH="D:\DR_project\project_backup\src\experiments\Stage2_Finetune_B7_CBAM\best_thresholds.npy"
+python -m uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+Startup should print `[startup] ready — REAL MODEL` and the thresholds
+`[0.565, 1.441, 2.375, 3.042]`. `curl http://localhost:8000/health` confirms
+`"model_loaded": true`.
+
+**4 — point the deployed site at it (optional).** Run ngrok against port 8000
+with the same static domain; `AI_URL` on Render does not change, only what sits
+behind the hostname. Or run the whole stack locally and demo offline.
+
+### Two things that will bite
+
+`tf_efficientnet_b7_ns` at 600 px, batch 1, needs roughly 3 GB of VRAM. A
+Quadro T2000 has 4 GB, so it fits — and TTA is three *sequential* passes, so the
+memory does not stack. CCEM is a different matter: three fused explainers, one of
+which runs many masked forward passes. It is off on upload by default
+(`CCEM_ON_UPLOAD`) and belongs in the precompute batch, not in a live request.
+
+Do **not** import `augmentation.py` from the research repo — it does not parse
+(a stray token on line 5 of `get_train_transforms`). `dr_adapter.py` rebuilds the
+three-line validation transform inline for exactly this reason.

@@ -23,18 +23,45 @@ export default function CaseDetail() {
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState(null);
+  const [regrading, setRegrading] = useState(false);
 
   useEffect(() => {
-    api.case(id)
-      .then((row) => {
-        setCase(row);
-        // Open on the richest explanation this case actually has, rather than
-        // on a method that would fall back to a different picture.
-        const has = row.overlays || [];
-        setOverlay(has.includes("ccem") ? "ccem" : has.includes("cam") ? "cam" : "Default");
-      })
-      .catch((e) => setError(e.message));
+    let alive = true;
+    let timer;
+
+    function load() {
+      api.case(id)
+        .then((row) => {
+          if (!alive) return;
+          setCase(row);
+          // Open on the richest explanation this case actually has, rather than
+          // on a method that would fall back to a different picture.
+          const has = row.overlays || [];
+          setOverlay(has.includes("ccem") ? "ccem" : has.includes("cam") ? "cam" : "Default");
+          // A case can be mid-grading when the page opens, or be re-graded from
+          // another tab. Without this the doctor sits on a stale "Grading…"
+          // until they think to refresh.
+          if (row.status === "PROCESSING") timer = setTimeout(load, 2000);
+        })
+        .catch((e) => alive && setError(e.message));
+    }
+
+    load();
+    return () => { alive = false; clearTimeout(timer); };
   }, [id]);
+
+  async function regrade() {
+    setRegrading(true);
+    setFormError(null);
+    try {
+      setCase(await api.regrade(id));
+    } catch (err) {
+      setFormError(err.message);
+      setCase(await api.case(id));   // the server put it back to FAILED
+    } finally {
+      setRegrading(false);
+    }
+  }
 
   async function save() {
     setSaving(true);
@@ -54,6 +81,9 @@ export default function CaseDetail() {
 
   const available = c.overlays || [];
   const reviewed = c.status === "REVIEWED";
+  const graded = c.status === "GRADED";
+  const processing = c.status === "PROCESSING";
+  const failed = c.status === "FAILED";
   const canSave = agreement === "AGREE" || (agreement === "DISAGREE" && corrected != null && reason.trim());
 
   return (
@@ -66,8 +96,12 @@ export default function CaseDetail() {
             <span className="muted">{c.eye === "OD" ? "Right eye · OD" : "Left eye · OS"}</span>
           </div>
         </div>
-        <span className={reviewed ? "pill" : "pill pill-live"}>
-          {reviewed ? "Reviewed" : "Awaiting your review"}
+        <span className={graded ? "pill pill-live" : "pill"}
+              style={failed ? { color: "var(--g4)", borderColor: "var(--g4)" } : undefined}>
+          {reviewed ? "Reviewed"
+            : graded ? "Awaiting your review"
+            : processing ? "Grading…"
+            : "Grading failed"}
         </span>
       </div>
 
@@ -122,7 +156,11 @@ export default function CaseDetail() {
           <div className="card stack" style={{ padding: 16, gap: 14 }}>
             <div className="label">Model result</div>
             {c.grade == null ? (
-              <div className="muted">Not graded.</div>
+              <div className="muted">
+                {processing ? "The model is grading this image…"
+                  : failed ? "No grade — the grading service could not be reached."
+                  : "Not graded."}
+              </div>
             ) : (
               <div className="row" style={{ gap: 14 }}>
                 <div className="grade-badge"
@@ -141,7 +179,36 @@ export default function CaseDetail() {
             the diagnosis of record.</div>
           </div>
 
-          {reviewed ? (
+          {/* The review form appears only for a case the model has actually
+              graded. Agreeing with a grade that does not exist is not a
+              decision a doctor can make, so it must not be offered — the
+              server refuses it (BR-2), but a button that always fails is a
+              worse answer than no button. */}
+          {processing ? (
+            <div className="card stack" style={{ padding: 16, gap: 8 }}>
+              <div className="label">Your assessment</div>
+              <div style={{ fontWeight: 600 }}>Waiting for the model</div>
+              <div className="muted" style={{ fontSize: 13.5, lineHeight: 1.55 }}>
+                This case is being graded now. The review controls appear as soon
+                as there is a grade to agree or disagree with.
+              </div>
+            </div>
+          ) : failed ? (
+            <div className="card stack" style={{ padding: 16, gap: 10 }}>
+              <div className="label">Your assessment</div>
+              <div style={{ fontWeight: 600, color: "var(--g4)" }}>Grading failed</div>
+              <div className="muted" style={{ fontSize: 13.5, lineHeight: 1.55 }}>
+                The grading service did not answer, so this image has no model
+                grade. There is nothing to agree or disagree with yet — the
+                photograph is saved and can be graded again once the service is
+                back.
+              </div>
+              {formError && <div className="err">{formError}</div>}
+              <button className="btn" onClick={regrade} disabled={regrading}>
+                {regrading ? "Grading…" : "Try grading again"}
+              </button>
+            </div>
+          ) : reviewed ? (
             <div className="card stack" style={{ padding: 16, gap: 8 }}>
               <div className="label">Your assessment</div>
               <div style={{ fontWeight: 600 }}>
