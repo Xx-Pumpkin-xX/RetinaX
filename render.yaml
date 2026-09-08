@@ -7,6 +7,8 @@ services:
     name: retinax-api
     runtime: node
     rootDir: server
+    plan: free           # without this line a blueprint defaults to Starter,
+                         # and Render asks for a payment card before it will apply
     buildCommand: npm ci
     startCommand: node server.js
     envVars:

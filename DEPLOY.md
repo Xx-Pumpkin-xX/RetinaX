@@ -85,6 +85,13 @@ New → Blueprint → point it at the repo. `render.yaml` fills in the rest.
 By hand: New → Web Service, root directory `server`, build `npm ci`, start
 `node server.js`.
 
+**If Render asks for a payment card, the blueprint is missing `plan: free`.**
+A service in `render.yaml` with no `plan:` defaults to Starter, which is paid,
+so Render stops at the card form before it will apply anything. The line is in
+`render.yaml` now — if you still see the form, check the plan dropdown on the
+service is *Free* rather than adding a card. Render does not require a card for
+a free web service.
+
 Environment variables:
 
 | Variable | Value |
