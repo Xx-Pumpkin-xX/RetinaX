@@ -101,9 +101,15 @@ export default function Cases() {
       {error && <div className="err">{error}</div>}
 
       {cases && cases.length === 0 && (
-        <div className="card stack" style={{ padding: 40, alignItems: "center", gap: 8 }}>
+        <div className="card stack" style={{ padding: 40, alignItems: "center", gap: 10 }}>
           <div style={{ fontWeight: 600 }}>No cases yet</div>
-          <div className="muted" style={{ fontSize: 13.5 }}>Upload a fundus photograph to get started.</div>
+          <div className="muted" style={{ fontSize: 13.5, textAlign: "center", maxWidth: 380, lineHeight: 1.55 }}>
+            A new account starts empty — you only ever see cases you uploaded
+            yourself. Add a fundus photograph and the model will grade it.
+          </div>
+          <Link to="/cases/new" style={{ marginTop: 4 }}>
+            <button className="btn">+ New case</button>
+          </Link>
         </div>
       )}
 
