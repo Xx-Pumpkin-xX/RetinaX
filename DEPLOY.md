@@ -1,12 +1,18 @@
 # Deploying RetinaX.ai
 
-The shape we settled on:
+**Live as of 8 September 2026:**
 
 ```
-Cloudflare Pages  web/     the doctor's screens          https://retinax.pages.dev
-Render            server/  API, database, images         https://retinax-api.onrender.com
-DGX Spark         ai/      the model and the .pth        https://<your>.ngrok-free.dev
+Cloudflare Pages  web/     the doctor's screens     https://retinax.pages.dev
+Render (free)     server/  API, database, images    https://retinax-api.onrender.com
+DGX Spark         ai/      the model and the .pth   https://acuteness-finless-pluck.ngrok-free.dev
 ```
+
+Verified in a browser after the first Pages build: the site loads, and its
+`/api/me` call returns **401 rather than a CORS error** — which is what proves
+the chain is wired, since a mismatched `WEB_ORIGIN` fails before any status code
+is readable. `/cases/<id>` served `index.html` and the router redirected to
+login, so the SPA fallback works.
 
 **The first two do not need the Spark.** Deploy them now, with `AI_URL` pointing
 at a tunnel that may well be down: the site still loads, signs in, and browses
