@@ -37,6 +37,7 @@ export const api = {
   createCase: (formData) => call("/api/cases", { method: "POST", body: formData }),
   mark: (id, payload) => call(`/api/cases/${id}/mark`, json("POST", payload)),
   regrade: (id) => call(`/api/cases/${id}/regrade`, { method: "POST" }),
+  explain: (id) => call(`/api/cases/${id}/explain`, { method: "POST" }),
   signup: (fullName, email, password) =>
     call("/api/signup", json("POST", { fullName, email, password })),
   forgotPassword: (email) => call("/api/password/forgot", json("POST", { email })),
