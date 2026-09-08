@@ -13,13 +13,18 @@
 #   VAR_DIR=/srv/retinax-data                    the database and the images
 #   WEB_ORIGIN=https://retinax.pages.dev         exact, no trailing slash
 #   JWT_SECRET=<openssl rand -hex 32>
-#   AI_URL=http://<spark-tailscale-name>:8000    private, over the tailnet
+#   AI_URL=http://localhost:8000                 the model, privately
 #   NGROK_DOMAIN=acuteness-finless-pluck.ngrok-free.dev
 #
-# AI_URL over Tailscale rather than a public tunnel is the point: the model
-# service has no authentication of its own, so it should not be on the open
-# internet. On the tailnet only your machines can reach it, the address never
-# changes, and there is no tunnel to die.
+# Reaching the model privately is the point: /infer has no authentication of
+# its own, so it should not be on the open internet. Two ways, either is fine:
+#
+#   Tailscale     both machines on the tailnet, AI_URL=http://<spark-name>:8000
+#   SSH tunnel    set AI_SSH below; needs nothing installed on the GPU host,
+#                 which matters when you do not have root on it
+#
+#   AI_SSH=hungntt@spark.example.com    (optional) open ssh -N -L to the model
+#   AI_SSH_PORT=8000                    remote port, default 8000
 set -euo pipefail
 
 SESSION=retinax-api
@@ -43,7 +48,9 @@ case "${1:-start}" in
   status)
     echo "tmux:  $(tmux has-session -t "$SESSION" 2>/dev/null && echo running || echo 'NOT running')"
     echo -n "api:   "; curl -s -m 5 "http://localhost:$PORT/api/cases" || echo "(no answer on :$PORT)"; echo
-    echo -n "model: "; curl -s -m 8 "${AI_URL:-http://localhost:8000}/health" || echo "(unreachable — is Tailscale up on both ends?)"; echo
+    [ -n "${AI_SSH:-}" ] && echo "tunnel: ssh -L to $AI_SSH"
+    echo -n "model: "; curl -s -m 8 "${AI_URL:-http://localhost:8000}/health" \
+      || echo "(unreachable — check the tunnel, or Tailscale on both ends)"; echo
     U="$(public_url || true)"
     [ -n "$U" ] && { echo -n "public: "; curl -s -m 15 -H 'ngrok-skip-browser-warning: 1' "$U/api/cases" || echo "(no answer)"; echo; }
     ;;
@@ -65,16 +72,44 @@ case "${1:-start}" in
     [ -d "$HERE/node_modules" ] || { echo "installing dependencies…"; (cd "$HERE" && npm ci); }
     mkdir -p "$VAR_DIR"
 
+    : > "$TLOG"
+
+    # An SSH tunnel to the GPU host, when that machine cannot join the tailnet
+    # — no root needed there, and the model stays off the public internet.
+    # autossh reconnects after a dropped link; plain ssh does not, so the
+    # ServerAlive options at least make a dead one fail fast rather than hang.
+    if [ -n "${AI_SSH:-}" ]; then
+      SSH_BIN=ssh; command -v autossh >/dev/null 2>&1 && SSH_BIN=autossh
+      RP="${AI_SSH_PORT:-8000}"
+      tmux new-session -d -s "$SESSION" -c "$HERE" \
+        "$SSH_BIN -N -L $RP:localhost:$RP \
+           -o ServerAliveInterval=20 -o ServerAliveCountMax=3 \
+           -o ExitOnForwardFailure=yes $AI_SSH 2>&1 | tee '$HERE/ssh-tunnel.log'"
+      echo -n "opening the ssh tunnel to $AI_SSH"
+      for _ in $(seq 1 10); do
+        sleep 1
+        curl -s -m 2 "http://localhost:$RP/health" >/dev/null 2>&1 && break
+        printf .
+      done
+      echo
+      HAVE_SESSION=1
+    else
+      HAVE_SESSION=0
+    fi
+
     # Warn, do not block: the API is useful with the model down — that is the
     # whole reason for splitting them.
     curl -s -m 8 "$AI_URL/health" >/dev/null 2>&1 \
       || echo "note: $AI_URL is not answering. The API will still serve every existing case; only new uploads will fail."
 
-    : > "$TLOG"
-    tmux new-session -d -s "$SESSION" -c "$HERE" \
-      "NODE_ENV=production PORT=$PORT VAR_DIR='$VAR_DIR' WEB_ORIGIN='$WEB_ORIGIN' \
+    API_CMD="NODE_ENV=production PORT=$PORT VAR_DIR='$VAR_DIR' WEB_ORIGIN='$WEB_ORIGIN' \
        JWT_SECRET='$JWT_SECRET' AI_URL='$AI_URL' SEED_DEMO=1 \
        node server.js 2>&1 | tee '$LOG'"
+    if [ "$HAVE_SESSION" = "1" ]; then
+      tmux split-window -t "$SESSION" -c "$HERE" "$API_CMD"
+    else
+      tmux new-session -d -s "$SESSION" -c "$HERE" "$API_CMD"
+    fi
 
     if [ -n "${NGROK_DOMAIN:-}" ]; then
       tmux split-window -t "$SESSION" -c "$HERE" \
