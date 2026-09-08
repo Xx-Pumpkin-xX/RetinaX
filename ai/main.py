@@ -243,6 +243,12 @@ def health():
         "ok": True,
         "model_loaded": _model is not None,
         "ccem_on_upload": CCEM_ON_UPLOAD,
+        # So "did the new renderer actually deploy" is answerable from outside
+        # the process. Stored heatmaps are rendered files and do not repaint
+        # themselves, which makes a stale service and a stale picture look
+        # identical from the browser.
+        "heatmap_style": HEATMAP_STYLE,
+        "overlay_placed_on_crop": True,
     }
     try:
         import dr_adapter

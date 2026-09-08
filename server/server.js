@@ -7,7 +7,7 @@ import path from "node:path";
 import { openSync, readSync, closeSync } from "node:fs";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { db, GRADE_LABELS } from "./db.js";
-import { gradeImage, explainCcem } from "./ai.js";
+import { gradeImage, explain } from "./ai.js";
 import { seedDemo } from "./seed-demo.js";
 import { seedDoctors } from "./seed.js";
 import { UPLOAD_DIR } from "./paths.js";
@@ -360,17 +360,25 @@ app.post("/api/cases/:id/explain", auth, async (req, res) => {
   if (row.Grade == null) {
     return res.status(409).json({ error: "This case has no grade to explain yet" });
   }
-  if (row.HeatmapCcemPath) {
-    return res.json({ ...caseRow(row), reviews: reviewHistory(row.CaseID) });
-  }
+  // ?ccem=0 redraws Grad-CAM++ only: one backward pass rather than minutes of
+  // fusion, which is what you want when the renderer changed and the stored
+  // pictures are stale.
+  const wantCcem = req.query.ccem !== "0";
 
   try {
-    const ccemPath = await explainCcem(path.resolve(row.ImagePath), row.Grade);
-    db.prepare("UPDATE predictions SET HeatmapCcemPath = ? WHERE CaseID = ?")
-      .run(ccemPath, req.params.id);
+    const { camPath, ccemPath } =
+      await explain(path.resolve(row.ImagePath), row.Grade, { ccem: wantCcem });
+    // COALESCE on both, so a Grad-CAM++-only redraw keeps an existing CCEM map
+    // rather than deleting it. The grade is not touched — BR-4 — only pictures.
+    db.prepare(
+      `UPDATE predictions
+          SET HeatmapCamPath  = COALESCE(?, HeatmapCamPath),
+              HeatmapCcemPath = COALESCE(?, HeatmapCcemPath)
+        WHERE CaseID = ?`
+    ).run(camPath, ccemPath, req.params.id);
   } catch (err) {
-    console.error("ccem failed:", err.message);
-    return res.status(502).json({ error: `The grading service could not produce CCEM: ${err.message}` });
+    console.error("explain failed:", err.message);
+    return res.status(502).json({ error: `The grading service could not redraw the explanation: ${err.message}` });
   }
 
   const updated = ownCase(req.params.id, req.doctorId);
