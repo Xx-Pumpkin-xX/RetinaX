@@ -17,6 +17,31 @@ function StatusCell({ c }) {
 }
 
 /**
+ * Filter one eye-row.
+ *
+ * Deliberately three narrow controls rather than one clever query language.
+ * A doctor working a list wants "this patient", "what still needs me", and
+ * "what is referable" — and referable is a real clinical threshold, not a
+ * convenience: grade >= 2 (moderate NPDR) is the point at which screening
+ * guidelines say send them to an ophthalmologist.
+ */
+function matches(c, { q, status, referableOnly }) {
+  if (q) {
+    const hay = `${c.patientCode} ${c.eye} ${c.birthYear ?? ""}`.toLowerCase();
+    if (!hay.includes(q)) return false;
+  }
+  if (status === "AWAITING" && c.status !== "GRADED") return false;
+  if (status === "REVIEWED" && c.status !== "REVIEWED") return false;
+  if (status === "ATTENTION" && c.status !== "FAILED" && c.status !== "PROCESSING") return false;
+  if (referableOnly) {
+    // The doctor's correction is the grade that counts where one exists.
+    const g = c.correctedGrade ?? c.grade;
+    if (g == null || g < 2) return false;
+  }
+  return true;
+}
+
+/**
  * One row per eye, but the two eyes of a patient sit together.
  *
  * The grade is an eye-level fact, so the rows stay per eye. The referral
@@ -51,6 +76,9 @@ function groupByPatient(cases) {
 export default function Cases() {
   const [cases, setCases] = useState(null);
   const [error, setError] = useState(null);
+  const [q, setQ] = useState("");
+  const [status, setStatus] = useState("ALL");
+  const [referableOnly, setReferableOnly] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -82,7 +110,13 @@ export default function Cases() {
   }, []);
 
   const waiting = cases?.filter((c) => c.status === "GRADED").length ?? 0;
-  const patients = cases ? groupByPatient(cases) : [];
+  const filters = { q: q.trim().toLowerCase(), status, referableOnly };
+  const filtering = Boolean(filters.q) || status !== "ALL" || referableOnly;
+  const visible = cases ? cases.filter((c) => matches(c, filters)) : [];
+  const patients = cases ? groupByPatient(visible) : [];
+  const allPatients = cases ? groupByPatient(cases).length : 0;
+
+  const clear = () => { setQ(""); setStatus("ALL"); setReferableOnly(false); };
 
   return (
     <div className="page stack" style={{ gap: 18 }}>
@@ -90,15 +124,71 @@ export default function Cases() {
         <div className="stack" style={{ gap: 2 }}>
           <h1 style={{ fontSize: 23, fontWeight: 600, margin: 0 }}>My cases</h1>
           <div className="muted" style={{ fontSize: 13.5 }}>
-            {cases
-              ? `${patients.length} patient${patients.length === 1 ? "" : "s"} · ${waiting} awaiting your review`
-              : "Loading…"}
+            {!cases ? "Loading…"
+              : filtering
+                ? `${patients.length} of ${allPatients} patient${allPatients === 1 ? "" : "s"} shown`
+                : `${allPatients} patient${allPatients === 1 ? "" : "s"} · ${waiting} awaiting your review`}
           </div>
         </div>
         <Link to="/cases/new"><button className="btn">+ New case</button></Link>
       </div>
 
       {error && <div className="err">{error}</div>}
+
+      {cases && cases.length > 0 && (
+        <div className="card row" style={{ padding: 12, gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+          <div className="row grow" style={{ gap: 8, minWidth: 240, position: "relative" }}>
+            <label className="label" htmlFor="case-search" style={{ position: "absolute", left: -9999 }}>
+              Search cases
+            </label>
+            <input
+              id="case-search"
+              className="input grow"
+              type="search"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search patient code, eye, year of birth…"
+              autoComplete="off"
+            />
+          </div>
+
+          <div className="seg" role="group" aria-label="Filter by status">
+            {[["ALL", "All"], ["AWAITING", "Awaiting review"], ["REVIEWED", "Reviewed"], ["ATTENTION", "Needs attention"]]
+              .map(([v, label]) => (
+                <button key={v} type="button" aria-pressed={status === v}
+                        onClick={() => setStatus(v)} style={{ height: 38, padding: "0 12px" }}>
+                  {label}
+                </button>
+              ))}
+          </div>
+
+          <label className="row" style={{ gap: 8, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap" }}
+                 title="Grade 2 and above — the threshold at which screening guidelines refer a patient on">
+            <input type="checkbox" checked={referableOnly}
+                   onChange={(e) => setReferableOnly(e.target.checked)} />
+            Referable only
+          </label>
+
+          {filtering && (
+            <button type="button" className="btn btn-ghost" onClick={clear}
+                    style={{ height: 38, padding: "0 12px", fontSize: 13 }}>
+              Clear
+            </button>
+          )}
+        </div>
+      )}
+
+      {cases && cases.length > 0 && patients.length === 0 && (
+        <div className="card stack" style={{ padding: 36, alignItems: "center", gap: 8 }}>
+          <div style={{ fontWeight: 600 }}>Nothing matches</div>
+          <div className="muted" style={{ fontSize: 13.5 }}>
+            {allPatients} patient{allPatients === 1 ? "" : "s"} in your worklist, none matching these filters.
+          </div>
+          <button type="button" className="btn btn-ghost" onClick={clear} style={{ marginTop: 4 }}>
+            Clear filters
+          </button>
+        </div>
+      )}
 
       {cases && cases.length === 0 && (
         <div className="card stack" style={{ padding: 40, alignItems: "center", gap: 10 }}>
@@ -160,7 +250,8 @@ export default function Cases() {
       <div className="muted" style={{ fontSize: 12 }}>
         You only see cases you uploaded. Each row is one eye; a patient's two eyes are grouped.
         "Worse eye" is the higher of the two grades — the doctor's correction where one exists,
-        otherwise the model's.
+        otherwise the model's. "Referable" means grade 2 or above, the threshold at which
+        screening guidelines send a patient on to an ophthalmologist.
       </div>
     </div>
   );
