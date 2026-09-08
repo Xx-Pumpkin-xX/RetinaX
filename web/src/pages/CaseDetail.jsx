@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { api, API_BASE, GRADES, gradeVar } from "../api.js";
+import { api, GRADES, gradeVar } from "../api.js";
+import ApiImage from "../ApiImage.jsx";
 
 // "Default" is always available — it is the photograph with nothing on top.
 // CAM and CCEM appear only when the service actually returned that map, so the
@@ -110,10 +111,10 @@ export default function CaseDetail() {
         {/* ------------------------------------------------------- viewer */}
         <div className="card stack" style={{ overflow: "hidden" }}>
           <div className="viewer" style={{ height: 560 }}>
-            <img src={`${API_BASE}/api/cases/${c.id}/image`} alt="Fundus photograph" />
+            <ApiImage path={`/api/cases/${c.id}/image`} alt="Fundus photograph" />
             {overlay !== "Default" && (
-              <img className="overlay" src={`${API_BASE}/api/cases/${c.id}/heatmap/${overlay}`}
-                   alt={`${overlay.toUpperCase()} explanation overlay`} style={{ opacity }} />
+              <ApiImage className="overlay" path={`/api/cases/${c.id}/heatmap/${overlay}`}
+                        alt={`${overlay.toUpperCase()} explanation overlay`} style={{ opacity }} />
             )}
           </div>
           <div className="row" style={{ gap: 16, padding: "12px 16px", borderTop: "1px solid var(--line)" }}>

@@ -7,13 +7,13 @@ const BASE = import.meta.env.VITE_API_URL || "";
 // exactly like a broken login, so the header removes the doubt. Harmless
 // everywhere else. It does make every request preflighted, which is why
 // server.js has to name it in Access-Control-Allow-Headers.
-const NGROK_HEADERS = { "ngrok-skip-browser-warning": "true" };
+export const API_HEADERS = { "ngrok-skip-browser-warning": "true" };
 
 async function call(path, options = {}) {
   const res = await fetch(BASE + path, {
     credentials: "include",
     ...options,
-    headers: { ...NGROK_HEADERS, ...(options.headers || {}) },
+    headers: { ...API_HEADERS, ...(options.headers || {}) },
   });
   if (res.status === 204) return null;
   const body = await res.json().catch(() => ({}));
