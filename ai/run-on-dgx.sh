@@ -91,7 +91,11 @@ case "${1:-start}" in
       echo -n "api:   "; curl -s -m 5 "http://localhost:$API_PORT/api/cases" || echo "(no answer on :$API_PORT)"
       echo
     fi
-    U="$(public_url || true)"
+    if [ "${TUNNEL:-1}" = "0" ]; then
+      echo "tunnel: off — reached privately over Tailscale"
+      command -v tailscale >/dev/null 2>&1 && echo "  this host: $(tailscale status --self --peers=false 2>/dev/null | head -1)"
+    fi
+    U="$([ "${TUNNEL:-1}" = "1" ] && public_url || true)"
     if [ -n "$U" ]; then echo -n "public ($U): "; curl -s -m 15 "$U/health" || echo "(no answer)"; echo; fi
     ;;
 
@@ -144,7 +148,12 @@ case "${1:-start}" in
          node server.js 2>&1 | tee '$HERE/api.log'"
     fi
 
-    tmux split-window -t "$SESSION" -c "$HERE" "$(tunnel_cmd) 2>&1 | tee '$LOG'"
+    # TUNNEL=0 when the API reaches this service over Tailscale instead. That
+    # is the better arrangement: /infer has no authentication of its own, so it
+    # has no business being on the open internet.
+    if [ "${TUNNEL:-1}" = "1" ]; then
+      tmux split-window -t "$SESSION" -c "$HERE" "$(tunnel_cmd) 2>&1 | tee '$LOG'"
+    fi
     tmux select-layout -t "$SESSION" even-vertical >/dev/null 2>&1 || true
 
     echo "starting… (B7 takes ~30-60s to load)"

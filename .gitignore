@@ -34,3 +34,6 @@ ai/dgx.env
 ai/service.log
 ai/tunnel.log
 ai/cloudflared
+server/host.env
+server/api.log
+server/tunnel.log
