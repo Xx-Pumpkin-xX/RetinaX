@@ -28,3 +28,9 @@ venv/
 
 .DS_Store
 *.log
+
+# DGX Spark paths and ngrok domain - machine-specific, never committed
+ai/dgx.env
+ai/service.log
+ai/tunnel.log
+ai/cloudflared
