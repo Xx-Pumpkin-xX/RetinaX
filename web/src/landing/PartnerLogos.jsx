@@ -15,7 +15,7 @@ const PARTNERS = [
   {
     name: "CIE",
     src: "/assets/cie-logo.png",
-    href: "",              // TODO: the Center for Innovation and Entrepreneurship's URL
+    href: "https://usth.edu.vn/cie/",              // TODO: the Center for Innovation and Entrepreneurship's URL
     title: "Center for Innovation and Entrepreneurship",
   },
   {
