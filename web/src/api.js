@@ -2,8 +2,19 @@
 // VITE_API_URL to the deployed backend, e.g. https://retinax-api.onrender.com
 const BASE = import.meta.env.VITE_API_URL || "";
 
+// ngrok's free tier puts an interstitial in front of HTML traffic. JSON and
+// images should not trigger it, but an interstitial on /api/me would look
+// exactly like a broken login, so the header removes the doubt. Harmless
+// everywhere else. It does make every request preflighted, which is why
+// server.js has to name it in Access-Control-Allow-Headers.
+const NGROK_HEADERS = { "ngrok-skip-browser-warning": "true" };
+
 async function call(path, options = {}) {
-  const res = await fetch(BASE + path, { credentials: "include", ...options });
+  const res = await fetch(BASE + path, {
+    credentials: "include",
+    ...options,
+    headers: { ...NGROK_HEADERS, ...(options.headers || {}) },
+  });
   if (res.status === 204) return null;
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);

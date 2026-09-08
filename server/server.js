@@ -23,7 +23,10 @@ app.use(cookieParser());
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", WEB_ORIGIN);
   res.setHeader("Access-Control-Allow-Credentials", "true");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  // ngrok-skip-browser-warning is a custom header, so every request carrying
+  // it is preflighted. Omit it here and the browser rejects the response
+  // before your code ever sees it.
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
