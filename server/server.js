@@ -8,6 +8,7 @@ import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { db, GRADE_LABELS } from "./db.js";
 import { gradeImage } from "./ai.js";
 import { seedDemo } from "./seed-demo.js";
+import { seedDoctors } from "./seed.js";
 
 const PORT = process.env.PORT || 3000;
 const SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
@@ -328,7 +329,19 @@ app.use((err, _req, res, _next) => {
 app.listen(PORT, async () => {
   console.log(`RetinaX API on http://localhost:${PORT}`);
   // Free hosts wipe the disk on restart. This puts the demo data back.
+  //
+  // The doctors come first and are not optional: seedDemo() needs an owner for
+  // the cases it creates, and with an empty doctors table it skips silently.
+  // That is how a deployed instance ends up with no demo accounts and no
+  // worklist while the local one looks perfect.
   if (process.env.SEED_DEMO === "1") {
-    try { await seedDemo(); } catch (e) { console.warn("[demo]", e.message); }
+    try {
+      const { created, ids } = seedDoctors({ quiet: true });
+      if (created) console.log(`[demo] created ${created} demo doctor account(s)`);
+      // Seed *for Quang specifically*, not globally. seedDemo() with no doctor
+      // counts every case in the table, so once anyone has signed up the count
+      // is non-zero and the demo account would be left with an empty worklist.
+      await seedDemo({ doctorId: ids[0] });
+    } catch (e) { console.warn("[demo]", e.message); }
   }
 });
