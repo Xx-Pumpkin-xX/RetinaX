@@ -6,27 +6,28 @@ Open items first, then what has been resolved.
 
 ## Open
 
-### 1 · Sign-up is not built yet
-
-The mockup shows a **Sign up** tab and there is no route behind it. Decided: it
-should be **open sign-up** — anyone can create an account for the showcase. BR-1
-already isolates accounts (a doctor sees only their own cases, and another
-doctor's case returns 404), so a new account sees nothing but its own work.
-
-Two things it needs beyond the route itself:
-
-- each new account seeded with its own copy of the demo cases, so a judge who
-  signs up does not land on an empty worklist;
-- the report should say plainly that open sign-up is a **demo decision**. In a
-  real deployment accounts are provisioned by the clinic — a screening tool that
-  anyone can join is not one a hospital would run.
-
-**Files:** `server/server.js` (a `POST /api/signup`), `server/seed-demo.js`
-(seed per doctor rather than per database), `web/src/pages/Login.jsx`.
-
----
+*(nothing outstanding in the application itself — what remains is deployment,
+real demo images, and commit history)*
 
 ## Resolved
+
+### Sign-up
+
+*Built 8 Sep 2026.* Open sign-up, as decided — anyone can create an account for
+the showcase. Safe because of BR-1: a new account sees only its own work.
+
+Rejected: weak passwords, malformed emails, duplicate addresses (409). Accepted:
+the account is signed in immediately, and seeded with **its own copies** of the
+demo cases so a judge does not land on an empty worklist. Verified both
+directions — each account 404s on the other's case IDs.
+
+Seeding runs in the background, so the worklist now polls while any case is
+`PROCESSING`. Without it a new user saw one row saying "Grading…" that never
+changed until they refreshed.
+
+The report should say plainly that open sign-up is a **demo decision** — a
+hospital would provision accounts, not let the internet join.
+
 
 ### One case is one eye — you could not record both eyes together
 *Raised 8 Sep 2026, fixed the same day.*

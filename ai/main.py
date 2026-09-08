@@ -26,10 +26,39 @@ import io
 import os
 
 import numpy as np
+import traceback
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, File, Query, UploadFile
+from fastapi.responses import JSONResponse
 from PIL import Image
 
-app = FastAPI(title="RetinaX grading service")
+
+@asynccontextmanager
+async def lifespan(app):
+    """Load the model when the service starts, not on the first upload.
+
+    Two reasons. A wiring mistake should appear in the startup log while you
+    are watching it, rather than as a failed upload minutes later. And loading
+    a 249 MB B7 checkpoint takes real time — paying that on the first request
+    would make the demo's first case look broken.
+
+    Never fatal: if the research model cannot be loaded the stand-in serves
+    instead, so the API always has something to talk to.
+    """
+    global _model, _thresholds
+    _thresholds = load_thresholds()
+    try:
+        _model = load_model()
+    except Exception as e:
+        print(f"[startup] model load failed: {type(e).__name__}: {e}")
+        _model = None
+    print(f"[startup] ready — {'REAL MODEL' if _model else 'STAND-IN'} | "
+          f"thresholds {_thresholds}", flush=True)
+    yield
+
+
+app = FastAPI(title="RetinaX grading service", lifespan=lifespan)
 
 # --------------------------------------------------------------------- config
 # B7 was trained at 600; the research runs use --img_size 600.
@@ -67,59 +96,29 @@ def load_thresholds():
 
 
 def load_model():
+    """Load the real model through the adapter, or fall back to the stand-in.
+
+    Set DR_REPO and MODEL_PATH and this picks up ProjectDR2026. With neither
+    set — or if the import fails — it returns None and the stand-in keeps the
+    whole app runnable, so the web side is never blocked on the ML side.
     """
-    TODO — plug the trained model in here.
-
-    The research repo builds EfficientNet-B7 with an optional CBAM block and a
-    regression head, trained in three stages. Import its builder rather than
-    redefining the architecture, so the two can never drift apart:
-
-        import sys, torch
-        sys.path.insert(0, os.environ["DR_REPO"])          # the research repo
-        from src.training.model import build_model          # adjust to the real name
-
-        m = build_model(model="B7", use_cbam=True)
-        state = torch.load(MODEL_PATH, map_location="cpu")
-        m.load_state_dict(state.get("state_dict", state))
-        return m.eval().to("cuda" if torch.cuda.is_available() else "cpu")
-
-    Returning None keeps the whole pipeline runnable before the model is wired,
-    so the web side is never blocked on the ML side.
-    """
-    return None
+    if not os.environ.get("DR_REPO"):
+        print("[model] DR_REPO not set — running the stand-in")
+        return None
+    try:
+        import dr_adapter
+        return dr_adapter.load_model()
+    except Exception as e:
+        print(f"[model] could not load the research model: {type(e).__name__}: {e}")
+        print("[model] falling back to the stand-in so the service still answers")
+        return None
 
 
 def score_to_grade(score: float) -> int:
     return int(sum(1 for t in _thresholds if score >= t))
 
 
-def explain_cam(x):
-    """
-    TODO — Grad-CAM++ for one image. One forward and one backward pass; fast
-    enough to run on upload.
 
-        from src.xai.explanation.gradcampp import gradcampp   # adjust to the real name
-        return gradcampp(_model, x)      # HxW float array in 0..1
-    """
-    raise NotImplementedError
-
-
-def explain_ccem(x):
-    """
-    TODO — CCEM for one image.
-
-    The research pipeline is file-based: each explainer writes .npy maps into
-    an --xai_dir, and run_maples_ccem.py fuses whatever it finds there. That
-    shape is right for evaluating a dataset and wrong for serving one image, so
-    this needs a single-image path that calls the three explainers in memory and
-    hands their maps to the fusion function directly.
-
-    The fusion itself is cheap — resize, robust normalisation, reliability
-    weighting, blur. The cost is the three explainers, and SmoothIG dominates:
-    n_steps x nt_samples forward+backward passes. Batch those samples rather
-    than looping; it is roughly a tenfold difference.
-    """
-    raise NotImplementedError
 
 
 def _standin(img: Image.Image):
@@ -160,14 +159,15 @@ def predict(img: Image.Image, want_ccem: bool):
         return grade, cam, (ccem if want_ccem else None)
 
     # ---- real path ------------------------------------------------------
-    # import torch
-    # x = preprocess(img).unsqueeze(0).to(next(_model.parameters()).device)
-    # with torch.no_grad():
-    #     score = float(_model(x).squeeze())
-    # cam  = explain_cam(x)
-    # ccem = explain_ccem(x) if want_ccem else None
-    # return score_to_grade(score), cam, ccem
-    raise NotImplementedError("wire the model in predict()")
+    import dr_adapter
+    x, rgb = dr_adapter.preprocess(img)
+    grade = dr_adapter.score_to_grade(dr_adapter.predict_score(x))
+
+    # Grad-CAM++ is one backward pass, so it always runs. CCEM is three
+    # explainers and hundreds of passes, so it runs only when asked for.
+    cam = dr_adapter.explain_gradcampp(x)
+    ccem = dr_adapter.explain_ccem(x, rgb) if want_ccem else None
+    return grade, cam, ccem
 
 
 def cam_to_png(cam, size) -> str | None:
@@ -188,13 +188,22 @@ def cam_to_png(cam, size) -> str | None:
 
 @app.get("/health")
 def health():
-    return {
+    out = {
         "ok": True,
         "model_loaded": _model is not None,
-        "thresholds_loaded": _thresholds is not None and _thresholds != FALLBACK_THRESHOLDS,
         "ccem_on_upload": CCEM_ON_UPLOAD,
-        "image_size": IMAGE_SIZE,
     }
+    try:
+        import dr_adapter
+        out.update(dr_adapter.health())
+    except Exception:
+        out["image_size"] = IMAGE_SIZE
+    # Report the thresholds actually in use. The adapter keeps its own copy and
+    # never loads it when the stand-in is running, which would show null here
+    # while the service was happily grading with the fallback values.
+    out["thresholds"] = _thresholds
+    out["note"] = None if _model else "stand-in model — grades are not real"
+    return out
 
 
 @app.post("/infer")
@@ -204,7 +213,24 @@ async def infer(
 ):
     want_ccem = CCEM_ON_UPLOAD if ccem is None else ccem
     img = Image.open(io.BytesIO(await file.read())).convert("RGB")
-    grade, cam, ccem_map = predict(img, want_ccem)
+    try:
+        grade, cam, ccem_map = predict(img, want_ccem)
+    except Exception as e:
+        # Say what actually broke in the response body. A bare "Internal Server
+        # Error" means going to find the server's terminal and scrolling, which
+        # is slow while the wiring is still being shaken out. This is a research
+        # service on a private network, not a public API — the traceback is not
+        # leaking anything an attacker could use.
+        tb = traceback.format_exc()
+        print(tb, flush=True)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": f"{type(e).__name__}: {e}",
+                "where": "predict()",
+                "traceback": tb.splitlines()[-12:],
+            },
+        )
     return {
         "grade": int(grade),
         "heatmap_cam_png_base64": cam_to_png(cam, img.size),

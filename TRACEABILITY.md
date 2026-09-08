@@ -20,6 +20,12 @@ Verified against the running application on 7 September 2026.
 | UC-5 | Review Result | `pages/CaseDetail.jsx` | `GET /api/cases/:id` | `server.js:180` |
 | UC-6 | Record Grade *(extends UC-5)* | `CaseDetail.jsx`, correction form | `POST /api/cases/:id/mark` | `server.js:218` |
 | UC-7 | Recover Password | `Login.jsx` (forgot + reset states) | `POST /api/password/forgot` · `/reset` | `server.js:91`, `:112` |
+| — | *Sign up* | `Login.jsx` (signup tab) | `POST /api/signup` | `server.js:96` |
+
+**Sign-up is not in the use case diagram**, and that is a decision rather than an
+omission: the model was drawn for a clinic where accounts are provisioned. If the
+report presents sign-up as a feature, add UC-8 and an association from Doctor;
+if it presents it as demo scaffolding, leave the diagram alone and say so.
 
 **One upload is still one case.** New Case offers two photograph slots so a
 patient's eyes are entered together, but each photograph is posted separately and
@@ -102,18 +108,24 @@ and it is the thing to demonstrate live.
 | Mockup | Built as | |
 |---|---|---|
 | 1 Loading | the `me === undefined` branch in `App.jsx` | ✅ |
-| 2 Log in / Sign up | `pages/Login.jsx` | ⚠️ **no Sign up** — see below |
+| 2 Log in / Sign up | `pages/Login.jsx` | ✅ both tabs |
 | 3 My cases | `pages/Cases.jsx` | ✅ |
 | 4 New case | `pages/NewCase.jsx` | ✅ |
 | 5 Case detail — agree | `pages/CaseDetail.jsx` | ✅ |
 | 6 Case detail — disagree | same screen, correction form open | ✅ |
 
-**The Sign up tab in mockup 2 is not implemented, deliberately.** There is no
-public route that creates a doctor account. A screening tool where anyone can
-sign up is a tool where anyone can look at fundus images; accounts are created by
-the seed script. Either delete the tab from the mockup, or keep it and say in the
-report that it is out of scope for the demo. Do not leave the mockup showing a
-door the system does not have.
+**Sign-up is open, and that is a demo decision worth defending out loud.**
+`POST /api/signup` lets anyone create an account, which is what a competition
+showcase needs — a judge can try the tool on their own phone.
+
+It is safe because of BR-1, not in spite of it: a doctor only ever sees cases
+where `DoctorID` is their own, so a new account opens onto its own work and
+nothing else. Verified both directions — each account gets its own seeded copies,
+and each returns 404 for the other's case IDs.
+
+Say in the report that a system a hospital actually ran would provision accounts
+rather than let the internet join. Open sign-up is right for a demo and wrong for
+a clinic, and knowing the difference is the point.
 
 The Default / CAM / CCEM control only offers a method the case actually has a map
 for — a tab that silently rendered a different method's picture would make the

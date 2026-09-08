@@ -13,6 +13,11 @@ server/uploads/
 # re-seed itself from. They must be public-dataset images (APTOS 2019 /
 # EyePACS) — never real patient photographs.
 
+# A scratch drop for the DR research repo's source, so it can be read while the
+# serving adapter is written without ending up in this repository's history.
+# A file committed once stays in the history even after it is deleted.
+_research-src/
+
 # Model weights are large and are not source.
 ai/*.pth
 ai/__pycache__/
@@ -24,3 +29,7 @@ venv/
 .DS_Store
 *.log
 Claude outputs
+# Dropped copy of the DR research repo (source + a 249 MB checkpoint) kept here
+# while the serving adapter is written. GitHub rejects files over 100 MB, and a
+# file committed once stays in the history even after it is deleted.
+project_backup/
