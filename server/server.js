@@ -214,6 +214,27 @@ const caseRow = (row) => ({
   overlays: [row.HeatmapCamPath && "cam", row.HeatmapCcemPath && "ccem"].filter(Boolean),
 });
 
+/**
+ * Every assessment saved for a case, oldest first.
+ *
+ * Only fetched for a single case, never for the worklist — the list needs the
+ * current answer, and one query per row to show history nobody is looking at
+ * would be the classic N+1.
+ */
+const reviewHistory = (caseId) =>
+  db
+    .prepare(
+      `SELECT Agreement, CorrectedGrade, Reason, CreatedAt
+         FROM reviews WHERE CaseID = ? ORDER BY CreatedAt ASC`
+    )
+    .all(caseId)
+    .map((r) => ({
+      agreement: r.Agreement,
+      correctedGrade: r.CorrectedGrade,
+      reason: r.Reason,
+      at: r.CreatedAt,
+    }));
+
 app.get("/api/cases", auth, (req, res) => {
   const rows = db
     .prepare(
@@ -240,7 +261,7 @@ function ownCase(id, doctorId) {
 app.get("/api/cases/:id", auth, (req, res) => {
   const row = ownCase(req.params.id, req.doctorId);
   if (!row) return res.status(404).json({ error: "Case not found" });
-  res.json(caseRow(row));
+  res.json({ ...caseRow(row), reviews: reviewHistory(row.CaseID) });
 });
 
 app.post("/api/cases", auth, upload.single("image"), async (req, res) => {
@@ -307,14 +328,20 @@ app.post("/api/cases/:id/regrade", auth, async (req, res) => {
     return res.status(502).json({ error: "The grading service still did not answer" });
   }
 
-  res.json(caseRow(ownCase(req.params.id, req.doctorId)));
+  const updated = ownCase(req.params.id, req.doctorId);
+  res.json({ ...caseRow(updated), reviews: reviewHistory(req.params.id) });
 });
 
 app.post("/api/cases/:id/mark", auth, (req, res) => {
   const row = ownCase(req.params.id, req.doctorId);
   if (!row) return res.status(404).json({ error: "Case not found" });
-  if (row.Status !== "GRADED") {
-    return res.status(409).json({ error: "This case is not ready to review" }); // BR-2
+  // BR-2: reviewable only once the model has produced a grade. A REVIEWED case
+  // is still reviewable — a clinician can amend an assessment, and refusing
+  // that made a mis-click on a grade 4 eye permanent. What must not happen is
+  // the amendment erasing what came before, which is why every submission is
+  // appended to `reviews` below.
+  if (row.Status !== "GRADED" && row.Status !== "REVIEWED") {
+    return res.status(409).json({ error: "This case has no grade to review yet" });
   }
 
   const { agreement, correctedGrade, reason } = req.body || {};
@@ -335,13 +362,22 @@ app.post("/api/cases/:id/mark", auth, (req, res) => {
     if (!why) return res.status(400).json({ error: "A reason is required when you disagree" });
   }
 
+  const now = new Date().toISOString();
+
+  // The trail first, so a failure here cannot leave an amendment unrecorded.
+  db.prepare(
+    `INSERT INTO reviews (ReviewID, CaseID, Agreement, CorrectedGrade, Reason, CreatedAt)
+     VALUES (?,?,?,?,?,?)`
+  ).run(randomUUID(), req.params.id, agreement, grade, why, now);
+
   // BR-4: predictions.Grade is never touched.
   db.prepare(
     `UPDATE cases SET Agreement = ?, CorrectedGrade = ?, Reason = ?,
             Status = 'REVIEWED', ReviewedAt = ? WHERE CaseID = ?`
-  ).run(agreement, grade, why, new Date().toISOString(), req.params.id);
+  ).run(agreement, grade, why, now, req.params.id);
 
-  res.json(caseRow(ownCase(req.params.id, req.doctorId)));
+  res.json({ ...caseRow(ownCase(req.params.id, req.doctorId)),
+             reviews: reviewHistory(req.params.id) });
 });
 
 /* --------------------------------------------------------------- files --- */

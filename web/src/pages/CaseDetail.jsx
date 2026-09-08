@@ -6,6 +6,10 @@ import ApiImage from "../ApiImage.jsx";
 // "Default" is always available — it is the photograph with nothing on top.
 // CAM and CCEM appear only when the service actually returned that map, so the
 // control can never offer a method it would then render as a different one.
+const when = (iso) =>
+  new Date(iso).toLocaleString("en-GB",
+    { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+
 const METHODS = [
   { key: "cam", label: "CAM" },
   { key: "ccem", label: "CCEM" },
@@ -25,6 +29,7 @@ export default function CaseDetail() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState(null);
   const [regrading, setRegrading] = useState(false);
+  const [amending, setAmending] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -70,6 +75,9 @@ export default function CaseDetail() {
     try {
       setCase(await api.mark(id, { agreement, correctedGrade: corrected, reason }));
       setAgreement(null);
+      setCorrected(null);
+      setReason("");
+      setAmending(false);
     } catch (err) {
       setFormError(err.message);
     } finally {
@@ -209,8 +217,8 @@ export default function CaseDetail() {
                 {regrading ? "Grading…" : "Try grading again"}
               </button>
             </div>
-          ) : reviewed ? (
-            <div className="card stack" style={{ padding: 16, gap: 8 }}>
+          ) : reviewed && !amending ? (
+            <div className="card stack" style={{ padding: 16, gap: 10 }}>
               <div className="label">Your assessment</div>
               <div style={{ fontWeight: 600 }}>
                 {c.agreement === "AGREE"
@@ -218,6 +226,40 @@ export default function CaseDetail() {
                   : `Disagreed — corrected to ${c.correctedGrade} · ${GRADES[c.correctedGrade]}`}
               </div>
               {c.reason && <div className="muted" style={{ fontSize: 13.5 }}>{c.reason}</div>}
+
+              {/* Amendments are kept, not overwritten. A doctor who mis-clicks
+                  must be able to correct it; a record that silently changed
+                  would defeat the point of storing the disagreement at all. */}
+              {(c.reviews?.length ?? 0) > 1 && (
+                <details style={{ fontSize: 12.5 }}>
+                  <summary className="muted" style={{ cursor: "pointer" }}>
+                    Amended {c.reviews.length - 1} time{c.reviews.length === 2 ? "" : "s"} — show history
+                  </summary>
+                  <div className="stack" style={{ gap: 6, marginTop: 8 }}>
+                    {c.reviews.map((r, i) => (
+                      <div key={i} className="muted"
+                           style={{ borderLeft: "2px solid var(--line-strong)", paddingLeft: 9 }}>
+                        <div>
+                          {r.agreement === "AGREE" ? "Agreed" : `Disagreed — grade ${r.correctedGrade}`}
+                          {" · "}{when(r.at)}
+                          {i === c.reviews.length - 1 && " · current"}
+                        </div>
+                        {r.reason && <div style={{ fontSize: 12 }}>{r.reason}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+
+              <button type="button" className="btn btn-ghost"
+                      onClick={() => {
+                        setAmending(true);
+                        setAgreement(null);
+                        setCorrected(c.correctedGrade ?? null);
+                        setReason(c.reason ?? "");
+                      }}>
+                Change my assessment
+              </button>
             </div>
           ) : (
             <div className="card stack" style={{ padding: 16, gap: 13 }}>
@@ -269,9 +311,17 @@ export default function CaseDetail() {
 
               {formError && <div className="err">{formError}</div>}
 
-              <button className="btn" disabled={!canSave || saving} onClick={save}>
-                {saving ? "Saving…" : "Save assessment"}
-              </button>
+              <div className="row" style={{ gap: 10 }}>
+                <button className="btn grow" disabled={!canSave || saving} onClick={save}>
+                  {saving ? "Saving…" : amending ? "Save amendment" : "Save assessment"}
+                </button>
+                {amending && (
+                  <button className="btn btn-ghost" type="button" disabled={saving}
+                          onClick={() => { setAmending(false); setAgreement(null); setFormError(null); }}>
+                    Cancel
+                  </button>
+                )}
+              </div>
             </div>
           )}
         </div>
