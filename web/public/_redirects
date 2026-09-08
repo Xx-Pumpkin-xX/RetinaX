@@ -1,1 +1,4 @@
+# Functions are matched before this file, so /api/* reaches the proxy in
+# functions/api/[[path]].js and never falls through to index.html. The rule
+# below is only for client-side routes.
 /*    /index.html   200
