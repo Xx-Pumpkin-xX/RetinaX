@@ -120,8 +120,16 @@ showcase needs — a judge can try the tool on their own phone.
 
 It is safe because of BR-1, not in spite of it: a doctor only ever sees cases
 where `DoctorID` is their own, so a new account opens onto its own work and
-nothing else. Verified both directions — each account gets its own seeded copies,
-and each returns 404 for the other's case IDs.
+nothing else. Verified both directions — a new account's worklist comes back
+empty, and each account returns 404 for the other's case IDs.
+
+**A new account starts with nothing, and that is deliberate.** Sign-up used to
+seed the new doctor a copy of the demo cases so a judge never saw a blank page.
+It was removed: showing a doctor four already-reviewed patients they had never
+uploaded reads as invented history, and this project's whole claim is that the
+model's grade and the doctor's grade are both real and both preserved. The
+pre-graded cases live on the demo account, which is what the report and the live
+demo sign in as. A registered account starts where a real doctor starts.
 
 Say in the report that a system a hospital actually ran would provision accounts
 rather than let the internet join. Open sign-up is right for a demo and wrong for

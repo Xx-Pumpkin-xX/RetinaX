@@ -126,8 +126,8 @@ export default function Login({ onSignedIn, theme, onToggleTheme }) {
               {busy ? "Creating your account…" : "Create account"}
             </button>
             <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
-              Your worklist starts with a set of sample cases so you can try the
-              review flow straight away. You only ever see your own cases.
+              Your worklist starts empty. Upload a fundus photograph and the
+              model grades it — you only ever see cases you uploaded yourself.
             </div>
           </form>
         )}

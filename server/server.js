@@ -122,10 +122,12 @@ app.post("/api/signup", async (req, res) => {
   // after choosing it is friction with no security value.
   issueSession(res, id, false);
 
-  // Give the new account its own copy of the demo cases. An empty worklist is a
-  // bad first impression, and it is the first thing a judge would see.
-  seedDemo({ doctorId: id }).catch((e) => console.warn("[signup] seeding failed:", e.message));
-
+  // A new account starts EMPTY, deliberately. Seeding it with sample cases was
+  // friendlier to a judge browsing unattended, but it showed a doctor four
+  // already-reviewed patients they had never uploaded — which reads as invented
+  // history and undermines the one claim the project rests on. The demo account
+  // is where the pre-graded cases live; a real account starts where a real
+  // doctor starts.
   res.status(201).json({ id, fullName });
 });
 
