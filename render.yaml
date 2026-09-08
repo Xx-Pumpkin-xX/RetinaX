@@ -20,9 +20,11 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: WEB_ORIGIN
-        sync: false          # set to your deployed front-end URL
+        sync: false          # https://<project>.pages.dev — exactly, no trailing slash
       - key: AI_URL
-        sync: false          # where the grading service runs
+        sync: false          # the ngrok URL for the Spark. Safe to set to a dead
+                             # value: only new uploads need it, and the seeded
+                             # demo cases fall back to committed heatmaps.
       - key: SEED_DEMO
         value: "1"           # re-seed demo cases on every boot
     # Option A — pay for a persistent disk and data survives restarts:
