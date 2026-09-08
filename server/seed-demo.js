@@ -25,17 +25,25 @@ const PRECOMPUTED = path.join("demo-images", "precomputed");
  */
 async function gradeOrFallback(destPath, file) {
   try {
-    return { ...(await gradeImage(path.resolve(destPath))), source: "model" };
+    // Seeding is an offline batch, so it can afford CCEM — which is the whole
+    // point of the demo cases: they are the ones that show the fused map.
+    return { ...(await gradeImage(path.resolve(destPath), { ccem: true })), source: "model" };
   } catch (err) {
     const stem = path.parse(file).name;
     try {
       const saved = JSON.parse(await readFile(path.join(PRECOMPUTED, `${stem}.json`), "utf8"));
-      let heatmapPath = null;
-      if (saved.heatmap) {
-        heatmapPath = path.join("uploads", `${randomUUID()}.png`);
-        await copyFile(path.join(PRECOMPUTED, saved.heatmap), heatmapPath);
-      }
-      return { grade: saved.grade, heatmapPath, source: "precomputed" };
+      const restore = async (name) => {
+        if (!name) return null;
+        const dst = path.join("uploads", `${randomUUID()}.png`);
+        await copyFile(path.join(PRECOMPUTED, name), dst);
+        return dst;
+      };
+      return {
+        grade: saved.grade,
+        camPath: await restore(saved.cam),
+        ccemPath: await restore(saved.ccem),
+        source: "precomputed",
+      };
     } catch {
       throw err; // no live service and nothing precomputed — report the real cause
     }
@@ -83,12 +91,12 @@ export async function seedDemo({ force = false } = {}) {
           1955 + ((i * 7) % 30), SEXES[i % 2], EYES[i % 2], dest, created);
 
     try {
-      const { grade, heatmapPath, source } = await gradeOrFallback(dest, file);
+      const { grade, camPath, ccemPath, source } = await gradeOrFallback(dest, file);
       if (source === "precomputed") usedFallback++;
       db.prepare(
-        `INSERT INTO predictions (PredictionID, CaseID, Grade, HeatmapPath, CreatedAt)
-         VALUES (?,?,?,?,?)`
-      ).run(randomUUID(), id, grade, heatmapPath, created);
+        `INSERT INTO predictions (PredictionID, CaseID, Grade, HeatmapCamPath, HeatmapCcemPath, CreatedAt)
+         VALUES (?,?,?,?,?,?)`
+      ).run(randomUUID(), id, grade, camPath, ccemPath, created);
       db.prepare("UPDATE cases SET Status='GRADED' WHERE CaseID=?").run(id);
 
       // Leave the two newest awaiting review so there is something to demo,

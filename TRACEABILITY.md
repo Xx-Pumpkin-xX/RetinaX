@@ -21,6 +21,11 @@ Verified against the running application on 7 September 2026.
 | UC-6 | Record Grade *(extends UC-5)* | `CaseDetail.jsx`, correction form | `POST /api/cases/:id/mark` | `server.js:218` |
 | UC-7 | Recover Password | `Login.jsx` (forgot + reset states) | `POST /api/password/forgot` · `/reset` | `server.js:91`, `:112` |
 
+**One upload is still one case.** New Case offers two photograph slots so a
+patient's eyes are entered together, but each photograph is posted separately and
+becomes its own case. `POST /api/cases` and UC-2 are unchanged — the form calls
+the use case twice, which is not the same as the use case changing.
+
 **`include` — UC-2 includes UC-3.** Not a diagram convenience: `POST /api/cases`
 calls `gradeImage()` inside the same request before it answers. Uploading a case
 *always* grades it. That is what `include` means, and the code matches.
@@ -46,7 +51,7 @@ in the report, because a marker counting routes against use cases will notice.
 |---|---|---|---|
 | Doctor | `doctors` | DoctorID, FullName, Email, Password, ResetToken, ResetTokenExpiry | `Password` is `PasswordHash` (bcrypt); `ResetToken` is `ResetTokenHash` (SHA-256). Both are the same attribute, stored safely. |
 | Case | `cases` | CaseID, DoctorID, PatientCode, BirthYear, PatientSex, EyePosition, ImagePath, Status, Agreement, CorrectedGrade, Reason, CreatedAt | **plus `ReviewedAt`** — add it to the class diagram |
-| Prediction | `predictions` | PredictionID, CaseID, Grade, Heatmap, CreatedAt | **no `Score`** — see below |
+| Prediction | `predictions` | PredictionID, CaseID, Grade, Heatmap, CreatedAt | **no `Score`**, and `Heatmap` is now **two** attributes — see below |
 
 Relationships as drawn: `Doctor 1 → 0..* Case` is the `DoctorID` foreign key;
 `Case 1 → 0..1 Prediction` is the `UNIQUE` constraint on `predictions.CaseID`,
@@ -60,6 +65,11 @@ which is what enforces the *at most one* prediction per case.
    and nothing else. The code has no `Score` column. The diagram should not either.
 2. **Add `ReviewedAt` to Case.** The code records when the doctor reviewed; the
    class diagram does not list it.
+3. **Split `Heatmap` into `HeatmapCam` and `HeatmapCcem` on Prediction.** The case
+   screen offers Grad-CAM++ and CCEM as separate overlays, so there are two maps,
+   not one. Grad-CAM++ is a single backward pass and is produced on upload; CCEM
+   fuses three explainers and is produced in a batch run, so it can be absent.
+   `HeatmapCcem` is therefore nullable in a way `HeatmapCam` usually is not.
 
 Nothing else differs. Password recovery is two nullable columns on `Doctor`, as
 drawn — not a fourth class.
@@ -104,6 +114,10 @@ sign up is a tool where anyone can look at fundus images; accounts are created b
 the seed script. Either delete the tab from the mockup, or keep it and say in the
 report that it is out of scope for the demo. Do not leave the mockup showing a
 door the system does not have.
+
+The Default / CAM / CCEM control only offers a method the case actually has a map
+for — a tab that silently rendered a different method's picture would make the
+explainability claim untrue in the one place a judge will click.
 
 The mockups are dark, and dark is the default on a first visit whatever the
 operating system is set to — bright chrome around a dark fundus photograph wrecks

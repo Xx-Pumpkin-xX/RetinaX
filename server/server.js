@@ -151,13 +151,14 @@ const caseRow = (row) => ({
   reviewedAt: row.ReviewedAt,
   grade: row.Grade ?? null,
   gradeLabel: row.Grade == null ? null : GRADE_LABELS[row.Grade],
-  hasHeatmap: !!row.HeatmapPath,
+  // The screen only offers a method it actually has a map for.
+  overlays: [row.HeatmapCamPath && "cam", row.HeatmapCcemPath && "ccem"].filter(Boolean),
 });
 
 app.get("/api/cases", auth, (req, res) => {
   const rows = db
     .prepare(
-      `SELECT c.*, p.Grade, p.HeatmapPath FROM cases c
+      `SELECT c.*, p.Grade, p.HeatmapCamPath, p.HeatmapCcemPath FROM cases c
        LEFT JOIN predictions p ON p.CaseID = c.CaseID
        WHERE c.DoctorID = ? ORDER BY c.CreatedAt DESC`
     )
@@ -170,7 +171,7 @@ app.get("/api/cases", auth, (req, res) => {
 function ownCase(id, doctorId) {
   return db
     .prepare(
-      `SELECT c.*, p.Grade, p.HeatmapPath FROM cases c
+      `SELECT c.*, p.Grade, p.HeatmapCamPath, p.HeatmapCcemPath FROM cases c
        LEFT JOIN predictions p ON p.CaseID = c.CaseID
        WHERE c.CaseID = ? AND c.DoctorID = ?`
     )
@@ -200,11 +201,11 @@ app.post("/api/cases", auth, upload.single("image"), async (req, res) => {
         patientSex || null, eyePosition, req.file.path, now);
 
   try {
-    const { grade, heatmapPath } = await gradeImage(path.resolve(req.file.path));
+    const { grade, camPath, ccemPath } = await gradeImage(path.resolve(req.file.path));
     db.prepare(
-      `INSERT INTO predictions (PredictionID, CaseID, Grade, HeatmapPath, CreatedAt)
-       VALUES (?,?,?,?,?)`
-    ).run(randomUUID(), id, grade, heatmapPath, new Date().toISOString());
+      `INSERT INTO predictions (PredictionID, CaseID, Grade, HeatmapCamPath, HeatmapCcemPath, CreatedAt)
+       VALUES (?,?,?,?,?,?)`
+    ).run(randomUUID(), id, grade, camPath, ccemPath, new Date().toISOString());
     db.prepare("UPDATE cases SET Status = 'GRADED' WHERE CaseID = ?").run(id);
   } catch (err) {
     console.error("grading failed:", err.message);
@@ -257,10 +258,12 @@ app.get("/api/cases/:id/image", auth, (req, res) => {
   res.sendFile(path.resolve(row.ImagePath));
 });
 
-app.get("/api/cases/:id/heatmap", auth, (req, res) => {
+app.get("/api/cases/:id/heatmap/:method", auth, (req, res) => {
+  const column = { cam: "HeatmapCamPath", ccem: "HeatmapCcemPath" }[req.params.method];
+  if (!column) return res.status(400).json({ error: "Unknown explanation method" });
   const row = ownCase(req.params.id, req.doctorId);
-  if (!row || !row.HeatmapPath) return res.sendStatus(404);
-  res.sendFile(path.resolve(row.HeatmapPath));
+  if (!row || !row[column]) return res.sendStatus(404);
+  res.sendFile(path.resolve(row[column]));
 });
 
 /* ---------------------------------------------------------------- misc --- */

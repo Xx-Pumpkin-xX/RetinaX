@@ -46,7 +46,14 @@ ai/       FastAPI + PyTorch          the grading model (.pth), CAM / CCEM
 The model lives behind its own HTTP service rather than inside the API. Two
 reasons: it is a Python model and the API is Node, and the regression score and
 the Nelder-Mead optimised thresholds must stay *inside* the model. The service
-returns a grade and a heatmap. Nothing else leaves it.
+returns a grade and explanation maps. Nothing else leaves it.
+
+**Two maps, not one.** Grad-CAM++ is a single backward pass, cheap enough to run
+on upload. CCEM fuses Grad-CAM++, Ada-SISE and SmoothIG — hundreds of passes,
+minutes rather than seconds — so it is produced by a batch run and can be absent
+on a freshly uploaded case. The case screen offers only the methods that case
+actually has, because a tab that quietly showed a different method's picture
+would make the whole explainability claim untrue.
 
 ### Data model — three tables
 
@@ -54,7 +61,7 @@ returns a grade and a heatmap. Nothing else leaves it.
 |---|---|
 | `doctors` | account, bcrypt password hash |
 | `cases` | patient code, birth year, sex, eye, the image, status, and the doctor's assessment |
-| `predictions` | the model's grade and heatmap for a case — **write-once** |
+| `predictions` | the model's grade and its two explanation maps for a case — **write-once** |
 
 `predictions.Grade` is never updated. A doctor who disagrees writes
 `cases.CorrectedGrade` and `cases.Reason`; the model's grade stays visible next
@@ -315,6 +322,7 @@ ai/
   requirements.txt
 render.yaml               Render blueprint for the API
 SETUP.md                  step-by-step first-run guide (Windows + the DGX)
+KNOWN-ISSUES.md           open items, with what a fix would touch
 DEPLOY.md                 step-by-step deployment runbook
 COMMITS.md                suggested commit sequence, split across the team
 ```

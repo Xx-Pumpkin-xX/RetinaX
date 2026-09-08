@@ -16,6 +16,38 @@ function StatusCell({ c }) {
   );
 }
 
+/**
+ * One row per eye, but the two eyes of a patient sit together.
+ *
+ * The grade is an eye-level fact, so the rows stay per eye. The referral
+ * decision, though, is made per patient and follows the worse eye — so showing
+ * OD and OS in separate places would leave the doctor doing that comparison
+ * from memory.
+ */
+function groupByPatient(cases) {
+  const groups = new Map();
+  for (const c of cases) {
+    if (!groups.has(c.patientCode)) groups.set(c.patientCode, []);
+    groups.get(c.patientCode).push(c);
+  }
+  return [...groups.entries()]
+    .map(([patientCode, rows]) => {
+      rows.sort((a, b) => (a.eye === b.eye ? 0 : a.eye === "OD" ? -1 : 1));
+      const graded = rows.filter((r) => r.grade != null);
+      return {
+        patientCode,
+        rows,
+        // The doctor's corrected grade is the one that counts where it exists.
+        worst: graded.length
+          ? Math.max(...graded.map((r) => (r.correctedGrade ?? r.grade)))
+          : null,
+        latest: Math.max(...rows.map((r) => new Date(r.createdAt).getTime())),
+        pending: rows.filter((r) => r.status === "GRADED").length,
+      };
+    })
+    .sort((a, b) => b.latest - a.latest);
+}
+
 export default function Cases() {
   const [cases, setCases] = useState(null);
   const [error, setError] = useState(null);
@@ -26,6 +58,7 @@ export default function Cases() {
   }, []);
 
   const waiting = cases?.filter((c) => c.status === "GRADED").length ?? 0;
+  const patients = cases ? groupByPatient(cases) : [];
 
   return (
     <div className="page stack" style={{ gap: 18 }}>
@@ -33,7 +66,9 @@ export default function Cases() {
         <div className="stack" style={{ gap: 2 }}>
           <h1 style={{ fontSize: 23, fontWeight: 600, margin: 0 }}>My cases</h1>
           <div className="muted" style={{ fontSize: 13.5 }}>
-            {cases ? `${waiting} awaiting your review` : "Loading…"}
+            {cases
+              ? `${patients.length} patient${patients.length === 1 ? "" : "s"} · ${waiting} awaiting your review`
+              : "Loading…"}
           </div>
         </div>
         <Link to="/cases/new"><button className="btn">+ New case</button></Link>
@@ -48,36 +83,54 @@ export default function Cases() {
         </div>
       )}
 
-      {cases && cases.length > 0 && (
+      {patients.length > 0 && (
         <div className="card" style={{ overflow: "hidden" }}>
           <table className="table">
             <thead>
               <tr><th>Patient</th><th>Eye</th><th>Captured</th><th>AI grade</th><th>Status</th></tr>
             </thead>
             <tbody>
-              {cases.map((c) => (
-                <tr key={c.id} onClick={() => navigate(`/cases/${c.id}`)}>
-                  <td className="mono">{c.patientCode}</td>
-                  <td>{c.eye}</td>
-                  <td className="muted">{when(c.createdAt)}</td>
-                  <td>
-                    {c.grade == null ? <span className="muted">—</span> : (
-                      <span className="row" style={{ gap: 9 }}>
-                        <span className="dot" style={{ background: gradeVar(c.grade) }} />
-                        {c.grade} · {GRADES[c.grade]}
-                      </span>
-                    )}
-                  </td>
-                  <td><StatusCell c={c} /></td>
-                </tr>
-              ))}
+              {patients.map((p) =>
+                p.rows.map((c, i) => (
+                  <tr key={c.id} onClick={() => navigate(`/cases/${c.id}`)}
+                      style={i === 0 && p !== patients[0] ? { borderTop: "2px solid var(--line-strong)" } : undefined}>
+                    <td className="mono">
+                      {i === 0 ? (
+                        <span className="row" style={{ gap: 9 }}>
+                          {p.patientCode}
+                          {p.rows.length > 1 && p.worst != null && (
+                            <span className="muted" style={{ fontSize: 11.5 }}>
+                              worse eye {p.worst}
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="muted" style={{ fontSize: 12 }}>↳ same patient</span>
+                      )}
+                    </td>
+                    <td>{c.eye}</td>
+                    <td className="muted">{when(c.createdAt)}</td>
+                    <td>
+                      {c.grade == null ? <span className="muted">—</span> : (
+                        <span className="row" style={{ gap: 9 }}>
+                          <span className="dot" style={{ background: gradeVar(c.grade) }} />
+                          {c.grade} · {GRADES[c.grade]}
+                        </span>
+                      )}
+                    </td>
+                    <td><StatusCell c={c} /></td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
       )}
 
       <div className="muted" style={{ fontSize: 12 }}>
-        You only see cases you uploaded. Each row is one eye.
+        You only see cases you uploaded. Each row is one eye; a patient's two eyes are grouped.
+        "Worse eye" is the higher of the two grades — the doctor's correction where one exists,
+        otherwise the model's.
       </div>
     </div>
   );
