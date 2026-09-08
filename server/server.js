@@ -271,6 +271,41 @@ app.post("/api/cases", auth, upload.single("image"), async (req, res) => {
   res.status(201).json(caseRow(ownCase(id, req.doctorId)));
 });
 
+/**
+ * Re-grade a case whose grading failed.
+ *
+ * The grading service lives on a shared machine behind a tunnel, so "the model
+ * was not reachable when you uploaded" is a normal, temporary condition — not a
+ * reason to make the doctor upload the photograph a second time. The image is
+ * already on disk; only the prediction is missing.
+ *
+ * FAILED only. A GRADED case already has a prediction, and re-running the model
+ * over it would overwrite the very number BR-4 exists to preserve.
+ */
+app.post("/api/cases/:id/regrade", auth, async (req, res) => {
+  const row = ownCase(req.params.id, req.doctorId);
+  if (!row) return res.status(404).json({ error: "Case not found" });
+  if (row.Status !== "FAILED") {
+    return res.status(409).json({ error: "Only a case whose grading failed can be re-graded" });
+  }
+
+  db.prepare("UPDATE cases SET Status = 'PROCESSING' WHERE CaseID = ?").run(req.params.id);
+  try {
+    const { grade, camPath, ccemPath } = await gradeImage(path.resolve(row.ImagePath));
+    db.prepare(
+      `INSERT INTO predictions (PredictionID, CaseID, Grade, HeatmapCamPath, HeatmapCcemPath, CreatedAt)
+       VALUES (?,?,?,?,?,?)`
+    ).run(randomUUID(), req.params.id, grade, camPath, ccemPath, new Date().toISOString());
+    db.prepare("UPDATE cases SET Status = 'GRADED' WHERE CaseID = ?").run(req.params.id);
+  } catch (err) {
+    console.error("re-grading failed:", err.message);
+    db.prepare("UPDATE cases SET Status = 'FAILED' WHERE CaseID = ?").run(req.params.id);
+    return res.status(502).json({ error: "The grading service still did not answer" });
+  }
+
+  res.json(caseRow(ownCase(req.params.id, req.doctorId)));
+});
+
 app.post("/api/cases/:id/mark", auth, (req, res) => {
   const row = ownCase(req.params.id, req.doctorId);
   if (!row) return res.status(404).json({ error: "Case not found" });
