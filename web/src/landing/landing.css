@@ -577,6 +577,16 @@
   align-items: center;
   gap: 8px;
 }
+.rx-landing a.partner {
+  display: block;
+  text-decoration: none;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+.rx-landing a.partner:hover,
+.rx-landing a.partner:focus-visible {
+  opacity: 1;
+  transform: translateY(-1px);
+}
 .rx-landing .partner-logo {
   height: 88px;
   width: 210px;
@@ -856,7 +866,9 @@
 }
 .rx-landing .mini-row {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  /* Not five equal columns: "Awaiting review" is far wider than "OD" or a
+     date, and an equal split wrapped the status pill onto two lines. */
+  grid-template-columns: 1.1fr 0.5fr 0.8fr 0.9fr 1.5fr;
   gap: 8px;
   padding: 12px 14px;
   font-size: 13px;
@@ -874,11 +886,14 @@
   color: var(--muted);
 }
 .rx-landing .chip {
+  display: inline-block;
   font-style: normal;
   font-size: 12px;
   font-weight: 600;
   padding: 4px 10px;
   border-radius: 999px;
+  /* A pill that wraps stops looking like a pill. */
+  white-space: nowrap;
 }
 .rx-landing .chip-ok {
   background: rgba(31, 169, 113, 0.13);
