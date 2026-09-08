@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { UPLOAD_DIR } from "./paths.js";
 
 const AI_URL = process.env.AI_URL || "http://127.0.0.1:8000";
 // The service may be behind a tunnel to a lab machine. A request that never
@@ -39,7 +40,7 @@ export async function gradeImage(imageAbsPath, { ccem = false } = {}) {
 
   const save = async (b64) => {
     if (!b64) return null;
-    const p = path.join("uploads", `${randomUUID()}.png`);
+    const p = path.join(UPLOAD_DIR, `${randomUUID()}.png`);
     await writeFile(p, Buffer.from(b64, "base64"));
     return p;
   };

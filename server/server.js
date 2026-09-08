@@ -9,6 +9,7 @@ import { db, GRADE_LABELS } from "./db.js";
 import { gradeImage } from "./ai.js";
 import { seedDemo } from "./seed-demo.js";
 import { seedDoctors } from "./seed.js";
+import { UPLOAD_DIR } from "./paths.js";
 
 const PORT = process.env.PORT || 3000;
 const SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
@@ -29,7 +30,7 @@ app.use((req, res, next) => {
 });
 
 const upload = multer({
-  dest: "uploads/",
+  dest: UPLOAD_DIR,
   limits: { fileSize: 12 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ok = ["image/jpeg", "image/png"].includes(file.mimetype);
