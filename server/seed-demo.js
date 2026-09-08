@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { db } from "./db.js";
 import { gradeImage } from "./ai.js";
+import { UPLOAD_DIR } from "./paths.js";
 
 const SEXES = ["F", "M"];
 const EYES = ["OD", "OS"];
@@ -34,7 +35,7 @@ async function gradeOrFallback(destPath, file) {
       const saved = JSON.parse(await readFile(path.join(PRECOMPUTED, `${stem}.json`), "utf8"));
       const restore = async (name) => {
         if (!name) return null;
-        const dst = path.join("uploads", `${randomUUID()}.png`);
+        const dst = path.join(UPLOAD_DIR, `${randomUUID()}.png`);
         await copyFile(path.join(PRECOMPUTED, name), dst);
         return dst;
       };
@@ -88,7 +89,7 @@ export async function seedDemo({ force = false, doctorId = null } = {}) {
   let usedFallback = 0;
   for (const [i, file] of files.entries()) {
     const src = path.join("demo-images", file);
-    const dest = path.join("uploads", `${randomUUID()}${path.extname(file)}`);
+    const dest = path.join(UPLOAD_DIR, `${randomUUID()}${path.extname(file)}`);
     await copyFile(src, dest);
 
     const id = randomUUID();

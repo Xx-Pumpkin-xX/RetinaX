@@ -1,7 +1,5 @@
-import { mkdirSync } from "node:fs";
-
-mkdirSync("data", { recursive: true });
-mkdirSync("uploads", { recursive: true });
+import path from "node:path";
+import { DATA_DIR } from "./paths.js";
 
 /* ------------------------------------------------------------ the driver ---
  * Two ways to reach the same SQLite file, tried in this order:
@@ -19,7 +17,7 @@ mkdirSync("uploads", { recursive: true });
  * The two expose the same prepare/get/all/run/exec surface, which is all this
  * app uses.
  * -------------------------------------------------------------------------- */
-const DB_FILE = "data/retinax.db";
+const DB_FILE = path.join(DATA_DIR, "retinax.db");
 
 async function openDatabase() {
   try {

@@ -29,8 +29,26 @@ services:
                              # demo cases fall back to committed heatmaps.
       - key: SEED_DEMO
         value: "1"           # re-seed demo cases on every boot
-    # Option A — pay for a persistent disk and data survives restarts:
+    # ---------------------------------------------------------------------
+    # Making the data survive deploys, restarts and spin-downs.
+    #
+    # A disk requires a PAID instance type — free instances cannot have one.
+    # To turn it on: change `plan: free` above to `plan: starter`, then
+    # uncomment BOTH blocks below. They go together: the disk gives you a
+    # mount, and VAR_DIR is what puts the database and the images inside it.
+    #
+    # Mounting only server/data would keep every row and lose every
+    # photograph, so the worklist would come back full of broken images —
+    # which reads as a bug, not as a documented trade-off. paths.js exists to
+    # keep the two together under one mount.
+    #
+    # A disk also ends zero-downtime deploys: Render stops the old instance
+    # before starting the new one, so expect a few seconds of 502 on deploy.
+    #
+    # - key: VAR_DIR
+    #   value: /var/data
+    #
     # disk:
     #   name: retinax-data
-    #   mountPath: /opt/render/project/src/server/data
+    #   mountPath: /var/data
     #   sizeGB: 1
