@@ -28,8 +28,3 @@ venv/
 
 .DS_Store
 *.log
-Claude outputs
-# Dropped copy of the DR research repo (source + a 249 MB checkpoint) kept here
-# while the serving adapter is written. GitHub rejects files over 100 MB, and a
-# file committed once stays in the history even after it is deleted.
-project_backup/

@@ -3,10 +3,15 @@
 The shape we settled on:
 
 ```
-Vercel            web/     the doctor's screens          https://retinax.vercel.app
+Cloudflare Pages  web/     the doctor's screens          https://retinax.pages.dev
 Render            server/  API, database, images         https://retinax-api.onrender.com
-DGX Spark         ai/      the model and the .pth        https://<tunnel>.trycloudflare.com
+DGX Spark         ai/      the model and the .pth        https://<your>.ngrok-free.dev
 ```
+
+**The first two do not need the Spark.** Deploy them now, with `AI_URL` pointing
+at a tunnel that may well be down: the site still loads, signs in, and browses
+cases, because the demo cases carry committed grades and heatmaps. Only a *new
+upload* needs the model, and that is the part you demo in person.
 
 The model stays on the DGX Spark, which already has the weights and the dataset. It
 is reached over a tunnel, so nothing has to be copied and no GPU has to be
@@ -117,31 +122,45 @@ The disk is also wiped on that restart — which is what `SEED_DEMO=1` is for.
 
 ---
 
-## 3 · The front end, on Vercel
+## 3 · The front end, on Cloudflare Pages
 
-Import the repo. Vercel detects Vite on its own; only these matter:
+Workers & Pages → Create → Pages → Connect to Git → pick the repo.
 
-| | |
+| Setting | Value |
 |---|---|
-| Root directory | `web` |
+| Framework preset | **Vite** |
 | Build command | `npm run build` |
-| Output directory | `dist` |
+| Build output directory | `dist` |
+| **Root directory** *(under Advanced)* | **`web`** |
 
-One environment variable:
+The root directory is the one people miss. Leave it blank and Cloudflare builds
+from the repository root, finds no `package.json`, and fails.
+
+One environment variable, under Settings → Environment variables → **Production**:
 
 | Variable | Value |
 |---|---|
 | `VITE_API_URL` | your Render URL, e.g. `https://retinax-api.onrender.com`, no trailing slash |
 
-**`VITE_API_URL` is read at build time, not at runtime.** Changing it in the
-dashboard does nothing until you redeploy. This is the single most confusing
-thing about Vite on Vercel.
+**`VITE_API_URL` is read at build time, not at runtime.** Adding it in the
+dashboard does nothing to a build that already happened — you must **Retry
+deployment** afterwards. This is the single most confusing thing about Vite on
+any static host, and it looks exactly like "the API is down".
 
-`web/vercel.json` sends unknown paths to `index.html`. Without it, refreshing on
-`/cases/abc` returns 404 — there is no such file, the router lives in the browser.
+`web/public/_redirects` sends unknown paths to `index.html`. Without it,
+refreshing on `/cases/abc` returns 404 — there is no such file; the router lives
+in the browser. (`web/vercel.json` does the same job if you ever switch to
+Vercel; Cloudflare ignores it.)
 
-Now go back to Render and correct `WEB_ORIGIN` to the real Vercel URL if it
-differs from what you guessed.
+Now go back to Render and set `WEB_ORIGIN` to the real
+`https://<project>.pages.dev` URL.
+
+### Preview deployments will not work, and that is fine
+
+Cloudflare gives every branch its own `https://<hash>.retinax.pages.dev`. Those
+hostnames will fail CORS, because `WEB_ORIGIN` on Render names exactly one
+origin. Demo from the production URL. If you genuinely need previews, the API
+would have to accept a list of origins rather than one.
 
 ---
 
@@ -161,6 +180,24 @@ A custom domain, if you want one: add it in the Vercel dashboard, point a `CNAME
 at the value they give you, wait for DNS, and the certificate issues itself.
 
 ---
+
+## 4b · Verified before you start
+
+The deployed state — **API up, grading service unreachable** — was tested
+directly, and everything a judge would touch still works:
+
+| | |
+|---|---|
+| login with `NODE_ENV=production` | cookie is `HttpOnly; Secure; SameSite=None` |
+| CORS headers | present, matching `WEB_ORIGIN` |
+| worklist with the AI dead | loads, all cases present |
+| both heatmaps | served, 200 `image/png` |
+| BR-3, a disagreement with no reason | refused |
+| BR-4, after correcting to 4 | model's grade still 2 |
+| a new upload with the AI dead | honest 502 in 0.13 s, case marked FAILED |
+
+So the only thing a dead tunnel costs you is grading new uploads. Everything
+else — the part a judge browses unattended — is unaffected.
 
 ## 5 · The end-to-end check, before you call it done
 
