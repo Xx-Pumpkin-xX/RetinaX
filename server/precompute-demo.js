@@ -33,14 +33,22 @@ let ok = 0;
 for (const file of images) {
   const stem = path.parse(file).name;
   try {
-    const { grade, heatmapPath } = await gradeImage(path.resolve(DIR, file));
-    let heatmap = null;
-    if (heatmapPath) {
-      heatmap = `${stem}.png`;
-      await copyFile(heatmapPath, path.join(OUT, heatmap));
-    }
-    await writeFile(path.join(OUT, `${stem}.json`), JSON.stringify({ grade, heatmap }, null, 2));
-    console.log(`  ${file} -> grade ${grade}${heatmap ? " + heatmap" : ""}`);
+    // Ask for CCEM explicitly: this runs once, offline, so it can afford the
+    // minutes that an upload request cannot.
+    const { grade, camPath, ccemPath } = await gradeImage(path.resolve(DIR, file), { ccem: true });
+
+    const keep = async (src, suffix) => {
+      if (!src) return null;
+      const name = `${stem}-${suffix}.png`;
+      await copyFile(src, path.join(OUT, name));
+      return name;
+    };
+    const cam = await keep(camPath, "cam");
+    const ccem = await keep(ccemPath, "ccem");
+
+    await writeFile(path.join(OUT, `${stem}.json`), JSON.stringify({ grade, cam, ccem }, null, 2));
+    console.log(`  ${file} -> grade ${grade}` +
+                `${cam ? " + cam" : ""}${ccem ? " + ccem" : ""}`);
     ok++;
   } catch (err) {
     console.warn(`  ${file} -> FAILED: ${err.message}`);

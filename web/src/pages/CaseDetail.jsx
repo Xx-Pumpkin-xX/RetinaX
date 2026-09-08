@@ -2,14 +2,20 @@ import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api, API_BASE, GRADES, gradeVar } from "../api.js";
 
-const OVERLAYS = ["Default", "CAM", "CCEM"];
+// "Default" is always available — it is the photograph with nothing on top.
+// CAM and CCEM appear only when the service actually returned that map, so the
+// control can never offer a method it would then render as a different one.
+const METHODS = [
+  { key: "cam", label: "CAM" },
+  { key: "ccem", label: "CCEM" },
+];
 
 export default function CaseDetail() {
   const { id } = useParams();
   const [c, setCase] = useState(null);
   const [error, setError] = useState(null);
 
-  const [overlay, setOverlay] = useState("CCEM");
+  const [overlay, setOverlay] = useState("Default");
   const [opacity, setOpacity] = useState(0.62);
 
   const [agreement, setAgreement] = useState(null);
@@ -19,7 +25,15 @@ export default function CaseDetail() {
   const [formError, setFormError] = useState(null);
 
   useEffect(() => {
-    api.case(id).then(setCase).catch((e) => setError(e.message));
+    api.case(id)
+      .then((row) => {
+        setCase(row);
+        // Open on the richest explanation this case actually has, rather than
+        // on a method that would fall back to a different picture.
+        const has = row.overlays || [];
+        setOverlay(has.includes("ccem") ? "ccem" : has.includes("cam") ? "cam" : "Default");
+      })
+      .catch((e) => setError(e.message));
   }, [id]);
 
   async function save() {
@@ -38,6 +52,7 @@ export default function CaseDetail() {
   if (error) return <div className="page"><div className="err">{error}</div></div>;
   if (!c) return <div className="page muted">Loading…</div>;
 
+  const available = c.overlays || [];
   const reviewed = c.status === "REVIEWED";
   const canSave = agreement === "AGREE" || (agreement === "DISAGREE" && corrected != null && reason.trim());
 
@@ -62,16 +77,19 @@ export default function CaseDetail() {
         <div className="card stack" style={{ overflow: "hidden" }}>
           <div className="viewer" style={{ height: 560 }}>
             <img src={`${API_BASE}/api/cases/${c.id}/image`} alt="Fundus photograph" />
-            {overlay !== "Default" && c.hasHeatmap && (
-              <img className="overlay" src={`${API_BASE}/api/cases/${c.id}/heatmap`} alt=""
-                   style={{ opacity }} />
+            {overlay !== "Default" && (
+              <img className="overlay" src={`${API_BASE}/api/cases/${c.id}/heatmap/${overlay}`}
+                   alt={`${overlay.toUpperCase()} explanation overlay`} style={{ opacity }} />
             )}
           </div>
           <div className="row" style={{ gap: 16, padding: "12px 16px", borderTop: "1px solid var(--line)" }}>
             <span style={{ fontSize: 13.5, fontWeight: 500 }}>Overlay</span>
             <div className="seg">
-              {OVERLAYS.map((o) => (
-                <button key={o} type="button" aria-pressed={overlay === o} onClick={() => setOverlay(o)}>{o}</button>
+              <button type="button" aria-pressed={overlay === "Default"}
+                      onClick={() => setOverlay("Default")}>Default</button>
+              {METHODS.filter((m) => available.includes(m.key)).map((m) => (
+                <button key={m.key} type="button" aria-pressed={overlay === m.key}
+                        onClick={() => setOverlay(m.key)}>{m.label}</button>
               ))}
             </div>
             <input className="grow" type="range" min="0" max="1" step="0.01" value={opacity}
@@ -81,9 +99,15 @@ export default function CaseDetail() {
               {Math.round(opacity * 100)}%
             </span>
           </div>
-          {!c.hasHeatmap && (
+          {available.length === 0 && (
             <div className="muted" style={{ fontSize: 12.5, padding: "0 16px 12px" }}>
               No explanation map was returned for this image.
+            </div>
+          )}
+          {available.length === 1 && available[0] === "cam" && (
+            <div className="muted" style={{ fontSize: 12.5, padding: "0 16px 12px" }}>
+              Grad-CAM++ only. CCEM fuses three explainers and is computed in a
+              batch run, not on upload.
             </div>
           )}
         </div>

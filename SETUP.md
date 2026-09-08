@@ -182,7 +182,16 @@ working one. The symptom is `torch.cuda.is_available()` quietly turning `False`,
 and it costs an afternoon to unpick. This is why `ai/requirements.txt`
 deliberately does not list torch.
 
-## 2.2 · Copy the ai/ folder over and install the rest
+## 2.2 · Get the files onto the Spark
+
+**If you reach the Spark through JupyterLab** (no SSH), use `ai/run_on_dgx.ipynb`
+instead of the rest of this section. Drag `main.py`, `requirements.txt`,
+`run_on_dgx.ipynb` and `model.pth` into the JupyterLab file browser, open the
+notebook, and run the cells top to bottom. It does everything below — checks
+PyTorch without touching it, installs only the web-service packages, starts the
+service detached from the kernel, and prints the URL your PC should use.
+
+**If you have SSH:**
 
 ```bash
 scp -r ai/ you@spark:~/retinax-ai/

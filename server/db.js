@@ -74,7 +74,12 @@ CREATE TABLE IF NOT EXISTS predictions (
   PredictionID TEXT PRIMARY KEY,
   CaseID       TEXT NOT NULL UNIQUE REFERENCES cases(CaseID),
   Grade        INTEGER NOT NULL,
-  HeatmapPath  TEXT,
+  -- Two explanation maps, because the case screen offers two methods and they
+  -- must not be the same picture with different labels. Grad-CAM++ is one
+  -- backward pass; CCEM is the fusion of three explainers and is far slower,
+  -- so it can legitimately be absent on a freshly uploaded case.
+  HeatmapCamPath  TEXT,
+  HeatmapCcemPath TEXT,
   CreatedAt    TEXT NOT NULL
 );
 

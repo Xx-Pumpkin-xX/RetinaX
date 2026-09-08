@@ -13,6 +13,13 @@ grade and the heatmap are the whole contract.
 
 ## Running it on the DGX Spark
 
+**Through JupyterLab:** upload this folder and open `run_on_dgx.ipynb`. Run the
+cells top to bottom — it checks PyTorch without disturbing it, installs only the
+web-service packages, starts the service detached from the kernel so a restart
+does not kill it, and prints the URL to put in `AI_URL`.
+
+**Through SSH:**
+
 ```bash
 python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 pip install -r requirements.txt        # does NOT touch torch, on purpose
@@ -28,6 +35,22 @@ Quick-tunnel URLs change on every restart, so re-check after any reboot.
 **Do not `pip install torch` here.** The Spark is arm64 with a Grace Blackwell
 GPU; the default PyPI wheel is the wrong build and will install alongside the
 working one. Use the PyTorch the machine already has, or NVIDIA's container.
+
+## How long does it take on this machine?
+
+```bash
+python benchmark.py                 # torchvision B7, no weights needed
+python benchmark.py --pth model.pth --half
+```
+
+Prints the cost of one grading, one Grad-CAM++, and the per-sample cost at
+several batch sizes — then extrapolates what your CCEM settings would cost per
+image. Pass `--ig-steps`, `--sg-samples` and `--sise-passes` to match your real
+configuration.
+
+The batching rows are the important ones. Integrated Gradients and SmoothGrad
+are hundreds of independent passes; running them one at a time instead of
+batched is the difference between a minute and ten.
 
 ## Wiring in the real model
 
