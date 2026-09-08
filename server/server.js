@@ -450,6 +450,9 @@ function sendImage(res, filePath) {
     return res.sendStatus(404);
   }
   res.type(type);
+  // Match the client's no-store: an image that was once served with the wrong
+  // content type must not be able to come back from a cache after the fix.
+  res.setHeader("Cache-Control", "no-store");
   res.sendFile(abs);
 }
 
