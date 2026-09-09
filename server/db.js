@@ -81,8 +81,46 @@ CREATE TABLE IF NOT EXISTS predictions (
   CreatedAt    TEXT NOT NULL
 );
 
+-- Every assessment a doctor has ever saved for a case, including the ones they
+-- later changed their mind about.
+--
+-- The current values still live on the cases row, so nothing that reads a case
+-- has to know this table exists. What it adds is the trail: a clinician can
+-- amend an assessment - a mis-click on a grade 4 eye must be correctable - but
+-- an amendment must never quietly replace the original, because the
+-- disagreement record is the thing this project claims to preserve. Append
+-- here, overwrite there.
+CREATE TABLE IF NOT EXISTS reviews (
+  ReviewID       TEXT PRIMARY KEY,
+  CaseID         TEXT NOT NULL REFERENCES cases(CaseID),
+  Agreement      TEXT NOT NULL,
+  CorrectedGrade INTEGER,
+  Reason         TEXT,
+  CreatedAt      TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_cases_doctor ON cases(DoctorID, CreatedAt DESC);
+CREATE INDEX IF NOT EXISTS idx_reviews_case ON reviews(CaseID, CreatedAt);
 `);
+
+/**
+ * Add a column to an existing table.
+ *
+ * CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so a
+ * new column never reaches a database that has already been created — and the
+ * deployed one holds real work. Checked against PRAGMA rather than attempted
+ * and caught, so a genuine failure is still an error rather than swallowed.
+ */
+function ensureColumn(table, column, declaration) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (cols.some((c) => c.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${declaration}`);
+  console.log(`[schema] added ${table}.${column}`);
+}
+
+// When the patient details were last corrected. Null for a case never edited,
+// which is most of them.
+ensureColumn("cases", "UpdatedAt", "TEXT");
 
 export const GRADE_LABELS = [
   "No DR",

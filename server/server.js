@@ -244,6 +244,7 @@ const caseRow = (row) => ({
   reason: row.Reason,
   createdAt: row.CreatedAt,
   reviewedAt: row.ReviewedAt,
+  updatedAt: row.UpdatedAt ?? null,
   grade: row.Grade ?? null,
   gradeLabel: row.Grade == null ? null : GRADE_LABELS[row.Grade],
   // The screen only offers a method it actually has a map for.
@@ -454,6 +455,75 @@ app.post("/api/cases/:id/explain", auth, async (req, res) => {
     console.error("explain failed:", err.message);
     return res.status(502).json({ error: `The grading service could not redraw the explanation: ${err.message}` });
   }
+
+  const updated = ownCase(req.params.id, req.doctorId);
+  res.json({ ...caseRow(updated), reviews: reviewHistory(req.params.id) });
+});
+
+/**
+ * Correct the patient details on a case.
+ *
+ * A mistyped patient code or the wrong eye chosen from the dropdown is a
+ * clerical error, and there was no way to fix one — the case had to be
+ * uploaded again, which produced a duplicate and left the wrong one in the
+ * worklist.
+ *
+ * What can be corrected is exactly the data the doctor typed. What cannot:
+ *
+ *   the photograph   changing it would make the grade an answer to a
+ *                    different question
+ *   the grade        BR-4 — it is the model's measurement
+ *   the assessment   it has its own history and its own route
+ *
+ * So this is deliberately not a general "edit case" endpoint. It names four
+ * columns and touches nothing else.
+ */
+app.post("/api/cases/:id/details", auth, (req, res) => {
+  const row = ownCase(req.params.id, req.doctorId);
+  if (!row) return res.status(404).json({ error: "Case not found" });
+
+  const patientCode = String(req.body?.patientCode ?? "").trim();
+  const eyePosition = String(req.body?.eyePosition ?? "").trim().toUpperCase();
+  const rawYear = req.body?.birthYear;
+  const patientSex = req.body?.patientSex ? String(req.body.patientSex).trim().toUpperCase() : null;
+
+  if (!patientCode) return res.status(400).json({ error: "A patient code is required" });
+  if (patientCode.length > 64) return res.status(400).json({ error: "That patient code is too long" });
+  if (!["OD", "OS"].includes(eyePosition)) {
+    return res.status(400).json({ error: "Eye must be OD (right) or OS (left)" });
+  }
+  if (patientSex && !["F", "M"].includes(patientSex)) {
+    return res.status(400).json({ error: "Sex must be F or M, or left blank" });
+  }
+
+  let birthYear = null;
+  if (rawYear !== null && rawYear !== undefined && String(rawYear).trim() !== "") {
+    birthYear = Number(rawYear);
+    const thisYear = new Date().getFullYear();
+    // A year outside this range is a typo, not a patient. Rejecting it here
+    // beats a worklist quietly sorted by an impossible age.
+    if (!Number.isInteger(birthYear) || birthYear < 1900 || birthYear > thisYear) {
+      return res.status(400).json({ error: `Year of birth must be between 1900 and ${thisYear}` });
+    }
+  }
+
+  const changed = [];
+  if (row.PatientCode !== patientCode) changed.push(`code ${row.PatientCode} -> ${patientCode}`);
+  if (row.EyePosition !== eyePosition) changed.push(`eye ${row.EyePosition} -> ${eyePosition}`);
+  if ((row.BirthYear ?? null) !== birthYear) changed.push(`born ${row.BirthYear ?? "—"} -> ${birthYear ?? "—"}`);
+  if ((row.PatientSex ?? null) !== patientSex) changed.push(`sex ${row.PatientSex ?? "—"} -> ${patientSex ?? "—"}`);
+  if (!changed.length) {
+    return res.json({ ...caseRow(row), reviews: reviewHistory(row.CaseID) });
+  }
+
+  db.prepare(
+    `UPDATE cases SET PatientCode = ?, BirthYear = ?, PatientSex = ?, EyePosition = ?,
+            UpdatedAt = ? WHERE CaseID = ?`
+  ).run(patientCode, birthYear, patientSex, eyePosition, new Date().toISOString(), req.params.id);
+
+  // Logged because a patient code is how this image is matched to a person in
+  // the clinic's own records. Changing one is not a formatting tweak.
+  console.log(`[details] ${req.params.id.slice(0, 8)} by ${req.doctorId.slice(0, 8)}: ${changed.join(", ")}`);
 
   const updated = ownCase(req.params.id, req.doctorId);
   res.json({ ...caseRow(updated), reviews: reviewHistory(req.params.id) });

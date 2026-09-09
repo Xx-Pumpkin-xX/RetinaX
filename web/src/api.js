@@ -36,6 +36,7 @@ export const api = {
   case: (id) => call(`/api/cases/${id}`),
   createCase: (formData) => call("/api/cases", { method: "POST", body: formData }),
   mark: (id, payload) => call(`/api/cases/${id}/mark`, json("POST", payload)),
+  updateDetails: (id, payload) => call(`/api/cases/${id}/details`, json("POST", payload)),
   regrade: (id) => call(`/api/cases/${id}/regrade`, { method: "POST" }),
   // ccem:false redraws Grad-CAM++ only — seconds, not minutes.
   explain: (id, { ccem = true } = {}) =>

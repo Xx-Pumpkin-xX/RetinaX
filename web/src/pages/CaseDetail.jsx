@@ -31,6 +31,9 @@ export default function CaseDetail() {
   const [regrading, setRegrading] = useState(false);
   const [amending, setAmending] = useState(false);
   const [explaining, setExplaining] = useState(false); // false | "cam" | "ccem"
+  const [editing, setEditing] = useState(null);        // null, or a draft of the details
+  const [savingDetails, setSavingDetails] = useState(false);
+  const [detailsError, setDetailsError] = useState(null);
   const [explainError, setExplainError] = useState(null);
 
   useEffect(() => {
@@ -57,6 +60,20 @@ export default function CaseDetail() {
     load();
     return () => { alive = false; clearTimeout(timer); };
   }, [id]);
+
+  async function saveDetails(e) {
+    e.preventDefault();
+    setSavingDetails(true);
+    setDetailsError(null);
+    try {
+      setCase(await api.updateDetails(id, editing));
+      setEditing(null);
+    } catch (err) {
+      setDetailsError(err.message);
+    } finally {
+      setSavingDetails(false);
+    }
+  }
 
   async function redraw({ ccem }) {
     setExplaining(ccem ? "ccem" : "cam");
@@ -190,10 +207,81 @@ export default function CaseDetail() {
 
         {/* -------------------------------------------------------- panel */}
         <div className="stack" style={{ gap: 14 }}>
-          <div className="card" style={{ padding: "14px 16px", display: "grid", gridTemplateColumns: "88px 1fr", gap: "6px 10px", fontSize: 13.5 }}>
-            <span className="muted">Patient</span><span className="mono">{c.patientCode}</span>
-            <span className="muted">Born</span><span>{c.birthYear || "—"} · {c.patientSex || "—"}</span>
-          </div>
+          {/* Patient details are typed by a person, so a person can correct
+              them. The photograph, the grade and the assessment history are
+              not editable here — those are records, not data entry. */}
+          {editing ? (
+            <form className="card stack" style={{ padding: 16, gap: 12 }} onSubmit={saveDetails}>
+              <div className="label">Correct patient details</div>
+
+              <div className="stack" style={{ gap: 6 }}>
+                <label className="label" htmlFor="ed-code">Patient code</label>
+                <input id="ed-code" className="input mono" value={editing.patientCode} required
+                       onChange={(e) => setEditing({ ...editing, patientCode: e.target.value })} />
+              </div>
+
+              <div className="row" style={{ gap: 10 }}>
+                <div className="stack grow" style={{ gap: 6 }}>
+                  <label className="label" htmlFor="ed-year">Year of birth</label>
+                  <input id="ed-year" className="input" type="number" inputMode="numeric"
+                         min="1900" max={new Date().getFullYear()} value={editing.birthYear}
+                         onChange={(e) => setEditing({ ...editing, birthYear: e.target.value })} />
+                </div>
+                <div className="stack" style={{ gap: 6, width: 96 }}>
+                  <label className="label" htmlFor="ed-sex">Sex</label>
+                  <select id="ed-sex" className="input" value={editing.patientSex}
+                          onChange={(e) => setEditing({ ...editing, patientSex: e.target.value })}>
+                    <option value="">—</option>
+                    <option value="F">F</option>
+                    <option value="M">M</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="stack" style={{ gap: 6 }}>
+                <span className="label">Eye</span>
+                <div className="seg">
+                  {[["OD", "Right · OD"], ["OS", "Left · OS"]].map(([v, label]) => (
+                    <button key={v} type="button" style={{ flex: 1, height: 40 }}
+                            aria-pressed={editing.eyePosition === v}
+                            onClick={() => setEditing({ ...editing, eyePosition: v })}>{label}</button>
+                  ))}
+                </div>
+              </div>
+
+              {detailsError && <div className="err">{detailsError}</div>}
+
+              <div className="row" style={{ gap: 10 }}>
+                <button className="btn grow" type="submit" disabled={savingDetails}>
+                  {savingDetails ? "Saving…" : "Save details"}
+                </button>
+                <button className="btn btn-ghost" type="button" disabled={savingDetails}
+                        onClick={() => { setEditing(null); setDetailsError(null); }}>Cancel</button>
+              </div>
+            </form>
+          ) : (
+            <div className="card stack" style={{ padding: "14px 16px", gap: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "88px 1fr", gap: "6px 10px", fontSize: 13.5 }}>
+                <span className="muted">Patient</span><span className="mono">{c.patientCode}</span>
+                <span className="muted">Born</span><span>{c.birthYear || "—"} · {c.patientSex || "—"}</span>
+                <span className="muted">Eye</span><span>{c.eye === "OD" ? "Right · OD" : "Left · OS"}</span>
+              </div>
+              {c.updatedAt && (
+                <div className="muted" style={{ fontSize: 11.5 }}>
+                  Details corrected {when(c.updatedAt)}
+                </div>
+              )}
+              <button type="button" className="linkish" style={{ alignSelf: "flex-start", fontSize: 12.5 }}
+                      onClick={() => setEditing({
+                        patientCode: c.patientCode ?? "",
+                        birthYear: c.birthYear ?? "",
+                        patientSex: c.patientSex ?? "",
+                        eyePosition: c.eye,
+                      })}>
+                Correct these details
+              </button>
+            </div>
+          )}
 
           <div className="card stack" style={{ padding: 16, gap: 14 }}>
             <div className="label">Model result</div>
