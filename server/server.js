@@ -29,7 +29,7 @@ app.use((req, res, next) => {
   // it is preflighted. Omit it here and the browser rejects the response
   // before your code ever sees it.
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
@@ -527,6 +527,48 @@ app.post("/api/cases/:id/details", auth, (req, res) => {
 
   const updated = ownCase(req.params.id, req.doctorId);
   res.json({ ...caseRow(updated), reviews: reviewHistory(req.params.id) });
+});
+
+/**
+ * Delete a case.
+ *
+ * Only a case nobody has assessed. A REVIEWED case carries a clinician's
+ * recorded judgement, and the disagreement between that judgement and the
+ * model's grade is the thing this whole system exists to preserve — offering a
+ * button that quietly destroys one would undo the argument the project makes.
+ * So: FAILED, PROCESSING and GRADED can go; REVIEWED is refused, with a reason.
+ *
+ * That still covers the case this exists for. A failed upload holds nothing at
+ * all: no grade, no explanation, no decision. It is litter in a worklist, and
+ * litter in a worklist costs attention.
+ *
+ * Everything belonging to the case goes with it — the prediction, any review
+ * rows, the photograph and both heatmaps — because a half-deleted case is
+ * worse than either outcome.
+ */
+app.delete("/api/cases/:id", auth, async (req, res) => {
+  const row = ownCase(req.params.id, req.doctorId);
+  if (!row) return res.status(404).json({ error: "Case not found" });
+
+  if (row.Status === "REVIEWED") {
+    return res.status(409).json({
+      error: "This case has been reviewed. A recorded assessment is a clinical record and is not deleted here.",
+    });
+  }
+
+  // Rows first: if the unlinks fail we are left with unreferenced files, which
+  // is untidy. The reverse order leaves a case pointing at nothing, which is a
+  // bug the doctor sees.
+  db.prepare("DELETE FROM reviews WHERE CaseID = ?").run(req.params.id);
+  db.prepare("DELETE FROM predictions WHERE CaseID = ?").run(req.params.id);
+  db.prepare("DELETE FROM cases WHERE CaseID = ?").run(req.params.id);
+
+  await removeFile(row.ImagePath);
+  await removeFile(row.HeatmapCamPath);
+  await removeFile(row.HeatmapCcemPath);
+
+  console.log(`[delete] case ${req.params.id.slice(0, 8)} (${row.Status}) by ${req.doctorId.slice(0, 8)}`);
+  res.sendStatus(204);
 });
 
 app.post("/api/cases/:id/mark", auth, (req, res) => {

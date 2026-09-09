@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { api, GRADES, gradeVar } from "../api.js";
 import ApiImage from "../ApiImage.jsx";
 
@@ -17,6 +17,7 @@ const METHODS = [
 
 export default function CaseDetail() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [c, setCase] = useState(null);
   const [error, setError] = useState(null);
 
@@ -34,6 +35,9 @@ export default function CaseDetail() {
   const [editing, setEditing] = useState(null);        // null, or a draft of the details
   const [savingDetails, setSavingDetails] = useState(false);
   const [detailsError, setDetailsError] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState(null);
   const [explainError, setExplainError] = useState(null);
 
   useEffect(() => {
@@ -60,6 +64,18 @@ export default function CaseDetail() {
     load();
     return () => { alive = false; clearTimeout(timer); };
   }, [id]);
+
+  async function removeCase() {
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await api.deleteCase(id);
+      navigate("/cases", { replace: true });
+    } catch (err) {
+      setDeleteError(err.message);
+      setDeleting(false);
+    }
+  }
 
   async function saveDetails(e) {
     e.preventDefault();
@@ -444,6 +460,37 @@ export default function CaseDetail() {
                 )}
               </div>
             </div>
+          )}
+          {/* Deleting is deliberately last, quiet, and two-step. A reviewed
+              case is refused by the server, so the control says so rather than
+              offering something that will fail. */}
+          {reviewed ? (
+            <div className="muted" style={{ fontSize: 11.5, textAlign: "center" }}>
+              A reviewed case is a clinical record and is not deleted here.
+            </div>
+          ) : confirmDelete ? (
+            <div className="card stack" style={{ padding: 14, gap: 10 }}>
+              <div style={{ fontSize: 13.5, lineHeight: 1.5 }}>
+                Delete this case? The photograph
+                {available.length ? ", its explanation maps" : ""} and the model's
+                grade go with it. This cannot be undone.
+              </div>
+              {deleteError && <div className="err">{deleteError}</div>}
+              <div className="row" style={{ gap: 10 }}>
+                <button className="btn grow" onClick={removeCase} disabled={deleting}
+                        style={{ background: "var(--danger)", borderColor: "var(--danger)" }}>
+                  {deleting ? "Deleting…" : "Delete permanently"}
+                </button>
+                <button className="btn btn-ghost" onClick={() => setConfirmDelete(false)}
+                        disabled={deleting}>Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <button type="button" className="linkish"
+                    style={{ alignSelf: "center", fontSize: 12.5, color: "var(--danger)" }}
+                    onClick={() => setConfirmDelete(true)}>
+              Delete this case
+            </button>
           )}
         </div>
       </div>

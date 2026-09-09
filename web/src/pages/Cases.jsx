@@ -79,6 +79,8 @@ export default function Cases() {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("ALL");
   const [referableOnly, setReferableOnly] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [clearError, setClearError] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -118,6 +120,30 @@ export default function Cases() {
 
   const clear = () => { setQ(""); setStatus("ALL"); setReferableOnly(false); };
 
+  const failed = cases?.filter((c) => c.status === "FAILED") ?? [];
+
+  /**
+   * Delete every failed case at once.
+   *
+   * One request per case rather than a bulk endpoint: each deletion is then
+   * authorised and logged individually, and a failure part-way through leaves
+   * the rest deleted rather than rolling back work the doctor asked for. There
+   * are never many — a handful of failed uploads, not thousands.
+   */
+  async function clearFailed() {
+    setClearing(true);
+    setClearError(null);
+    const results = await Promise.allSettled(failed.map((c) => api.deleteCase(c.id)));
+    const stuck = results.filter((r) => r.status === "rejected").length;
+    if (stuck) setClearError(`${stuck} of ${failed.length} could not be removed.`);
+    try {
+      setCases(await api.cases());
+    } catch (e) {
+      setError(e.message);
+    }
+    setClearing(false);
+  }
+
   return (
     <div className="page stack" style={{ gap: 18 }}>
       <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-end" }}>
@@ -134,6 +160,7 @@ export default function Cases() {
       </div>
 
       {error && <div className="err">{error}</div>}
+      {clearError && <div className="err">{clearError}</div>}
 
       {cases && cases.length > 0 && (
         <div className="card row" style={{ padding: 12, gap: 12, flexWrap: "wrap", alignItems: "center" }}>
@@ -173,6 +200,18 @@ export default function Cases() {
             <button type="button" className="btn btn-ghost" onClick={clear}
                     style={{ height: 38, padding: "0 12px", fontSize: 13 }}>
               Clear
+            </button>
+          )}
+
+          {/* A failed case holds no grade, no explanation and no assessment —
+              it is litter, and litter in a worklist costs attention. */}
+          {failed.length > 0 && (
+            <button type="button" className="btn btn-ghost" onClick={clearFailed}
+                    disabled={clearing} title="Deletes every case whose grading failed"
+                    style={{ height: 38, padding: "0 12px", fontSize: 13, color: "var(--danger)" }}>
+              {clearing
+                ? "Removing…"
+                : `Remove ${failed.length} failed`}
             </button>
           )}
         </div>
