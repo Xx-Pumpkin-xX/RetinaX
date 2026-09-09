@@ -99,17 +99,17 @@ export default function Login({ onSignedIn, theme, onToggleTheme }) {
           <form className="stack" style={{ padding: 26, gap: 16 }} onSubmit={submitSignup}>
             <div className="stack" style={{ gap: 6 }}>
               <label className="label" htmlFor="name">Full name</label>
-              <input id="name" className="input" value={fullName} placeholder="Dr. Nguyen Van A"
+              <input id="name" className="input" value={fullName} placeholder="somebody"
                      onChange={(e) => setFullName(e.target.value)} autoComplete="name" required />
             </div>
             <div className="stack" style={{ gap: 6 }}>
               <label className="label" htmlFor="su-email">Email</label>
-              <input id="su-email" className="input" type="email" value={email}
+              <input id="su-email" className="input" type="email" value={email} placeholder="somebody.mail@email.com"
                      onChange={(e) => setEmail(e.target.value)} autoComplete="username" required />
             </div>
             <div className="stack" style={{ gap: 6 }}>
               <label className="label" htmlFor="su-password">Password</label>
-              <input id="su-password" className="input" type="password" value={password}
+              <input id="su-password" className="input" type="password" value={password} placeholder="yourpassword"
                      onChange={(e) => setPassword(e.target.value)}
                      autoComplete="new-password" required />
               <div className="muted" style={{ fontSize: 12 }}>At least 8 characters.</div>
@@ -216,12 +216,6 @@ export default function Login({ onSignedIn, theme, onToggleTheme }) {
             </button>
           </form>
         )}
-
-        <div className="disclaimer">
-          <span aria-hidden="true">⚠</span>
-          <div><strong>Decision support only.</strong> The AI can be wrong. Every grade must be
-          confirmed by a clinician before it is used.</div>
-        </div>
       </div>
     </div>
   );
