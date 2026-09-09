@@ -76,14 +76,31 @@ function auth(req, res, next) {
  * SameSite=None *and* Secure. Getting this wrong is the classic "login works
  * locally, fails once deployed".
  */
-function issueSession(res, doctorId, keepSignedIn) {
-  const days = keepSignedIn ? 14 : 1;
-  const token = jwt.sign({ sub: doctorId }, SECRET, { expiresIn: `${days}d` });
+/**
+ * The session cookie's attributes, in one place.
+ *
+ * Setting and clearing MUST use identical values. A browser will not let a
+ * cookie marked Secure be overwritten by a Set-Cookie that is not — the rule
+ * exists so that a network attacker on a plain-HTTP page cannot tamper with a
+ * cookie the HTTPS site set. So a clearCookie() with the attributes left off
+ * is silently ignored: sign-out appears to work, and the session is still
+ * there on the next reload.
+ */
+function sessionCookieOptions() {
   const cross = process.env.NODE_ENV === "production";
-  res.cookie("rx", token, {
+  return {
     httpOnly: true,
     sameSite: cross ? "none" : "lax",
     secure: cross,
+    path: "/",
+  };
+}
+
+function issueSession(res, doctorId, keepSignedIn) {
+  const days = keepSignedIn ? 14 : 1;
+  const token = jwt.sign({ sub: doctorId }, SECRET, { expiresIn: `${days}d` });
+  res.cookie("rx", token, {
+    ...sessionCookieOptions(),
     maxAge: days * 24 * 60 * 60 * 1000,
   });
 }
@@ -148,7 +165,13 @@ app.post("/api/signup", async (req, res) => {
 });
 
 app.post("/api/logout", (req, res) => {
-  res.clearCookie("rx");
+  // Same attributes as when it was issued, or the browser keeps the cookie.
+  //
+  // Note what this does and does not do: it removes the cookie from this
+  // browser. The JWT inside it stays valid until it expires, so a token
+  // already copied elsewhere would still work. Revoking properly needs a
+  // server-side denylist, which is the right thing to add before real users.
+  res.clearCookie("rx", sessionCookieOptions());
   res.sendStatus(204);
 });
 

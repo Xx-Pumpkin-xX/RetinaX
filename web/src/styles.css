@@ -203,14 +203,30 @@ progress {
 input[type="range"] { height: 20px; cursor: pointer; }
 
 /* A confirmation, not an error: reuses the neutral notice tokens. */
+/* A confirmation the reader must not miss — "a reset link is on its way" is
+   the only feedback that anything happened, and in the neutral notice palette
+   it sat quieter than the form around it. Same tokens as the standing
+   disclaimer would have been wrong here: that one is permanent and must not
+   compete for attention, this one is transient and is the whole point of the
+   click. */
 .note {
-  font-size: 13px;
-  line-height: 1.5;
-  padding: 10px 13px;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: 13.5px;
+  line-height: 1.55;
+  padding: 12px 14px;
   border-radius: 8px;
-  color: var(--notice-ink);
-  background: var(--notice-soft);
-  border: 1px solid var(--notice-line);
+  color: var(--ink);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  border-left: 3px solid var(--accent);
+}
+.note::before {
+  content: "✓";
+  color: var(--accent);
+  font-weight: 700;
+  line-height: 1.35;
 }
 
 /* A link that is really a button (no navigation happens). */
