@@ -155,6 +155,7 @@ the exact opposite of what this system claims about its records.
 | [`SRS.md`](SRS.md) | Software requirements specification — functional and non-functional requirements, business rules, interfaces, verification |
 | [`BRD.md`](BRD.md) | Business requirements — problem, stakeholders, objectives, scope, risks |
 | [`UML.md`](UML.md) | Use case and class models as built, and the corrections to make in StarUML |
+| [`TECHNIQUES.md`](TECHNIQUES.md) | Every technique used and why, the bugs that taught something, and what we would do differently |
 | [`../TRACEABILITY.md`](../TRACEABILITY.md) | Every use case and class mapped to the code that implements it, with commands a marker can run |
 | [`../DEPLOY.md`](../DEPLOY.md) | Deployment runbook |
 | [`../SETUP.md`](../SETUP.md) | Running the system locally, including the model |
