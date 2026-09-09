@@ -104,6 +104,7 @@ case "${1:-start}" in
 
     API_CMD="NODE_ENV=production PORT=$PORT VAR_DIR='$VAR_DIR' WEB_ORIGIN='$WEB_ORIGIN' \
        JWT_SECRET='$JWT_SECRET' AI_URL='$AI_URL' SEED_DEMO=1 \
+       RESEND_API_KEY='${RESEND_API_KEY:-}' MAIL_FROM='${MAIL_FROM:-}' \
        node server.js 2>&1 | tee '$LOG'"
     if [ "$HAVE_SESSION" = "1" ]; then
       tmux split-window -t "$SESSION" -c "$HERE" "$API_CMD"

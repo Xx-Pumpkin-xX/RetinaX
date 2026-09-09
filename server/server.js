@@ -9,6 +9,7 @@ import { unlink } from "node:fs/promises";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { db, GRADE_LABELS } from "./db.js";
 import { gradeImage, explain } from "./ai.js";
+import { sendMail, isConfigured as mailConfigured } from "./mail.js";
 import { seedDemo } from "./seed-demo.js";
 import { seedDoctors } from "./seed.js";
 import { UPLOAD_DIR } from "./paths.js";
@@ -183,7 +184,7 @@ app.post("/api/logout", (req, res) => {
 const sha256 = (v) => createHash("sha256").update(v).digest("hex");
 const RESET_MINUTES = 30;
 
-app.post("/api/password/forgot", (req, res) => {
+app.post("/api/password/forgot", async (req, res) => {
   const email = String(req.body?.email || "").toLowerCase().trim();
   const doc = email ? db.prepare("SELECT DoctorID FROM doctors WHERE Email = ?").get(email) : null;
 
@@ -195,15 +196,33 @@ app.post("/api/password/forgot", (req, res) => {
     db.prepare("UPDATE doctors SET ResetTokenHash = ?, ResetTokenExpiry = ? WHERE DoctorID = ?")
       .run(sha256(token), expires, doc.DoctorID);
 
-    // TODO before real users: send this by email (Resend / SendGrid / SMTP)
-    // instead of printing it. Printing is honest for a demo; it is not a
-    // password reset flow you can put in front of patients' doctors.
-    console.log(`[reset] ${email} -> ${WEB_ORIGIN}/reset?token=${token} (valid ${RESET_MINUTES} min)`);
+    const link = `${WEB_ORIGIN}/reset?token=${token}`;
+
+    // Logged either way. When mail is configured this is the audit trail for a
+    // reset that was requested; when it is not, it is the only way to complete
+    // one, and someone running the demo needs to be able to find it.
+    console.log(`[reset] ${email} -> ${link} (valid ${RESET_MINUTES} min)`);
+
+    await sendMail({
+      to: email,
+      subject: "Reset your RetinaX.ai password",
+      text: [
+        "Someone asked to reset the password for this RetinaX.ai account.",
+        "",
+        `Open this link to choose a new one. It works once and expires in ${RESET_MINUTES} minutes:`,
+        link,
+        "",
+        "If this was not you, ignore this message — nothing has changed.",
+      ].join("\n"),
+    });
   }
 
-  // Always the same answer, whether or not the address exists: a different
-  // reply here tells an attacker which doctors have accounts.
-  res.json({ ok: true });
+  // The answer never depends on whether the address exists: a difference here
+  // tells an attacker which doctors have accounts. `delivery` describes the
+  // server's configuration, which is the same for everyone, so it is safe to
+  // report — and it is the difference between "check your inbox" and a screen
+  // that promises an email nothing will ever send.
+  res.json({ ok: true, delivery: mailConfigured() ? "email" : "unconfigured" });
 });
 
 app.post("/api/password/reset", (req, res) => {

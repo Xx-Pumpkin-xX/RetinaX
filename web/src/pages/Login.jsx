@@ -48,9 +48,17 @@ export default function Login({ onSignedIn, theme, onToggleTheme }) {
   const submitForgot = (e) => {
     e.preventDefault();
     run(async () => {
-      await api.forgotPassword(email);
-      // Deliberately the same message whether or not the address is registered.
-      setNote("If that address has an account, a reset link is on its way. It expires in 30 minutes.");
+      const out = await api.forgotPassword(email);
+      // Deliberately the same message whether or not the address is
+      // registered — a different reply would tell an attacker which addresses
+      // have accounts. What does change is whether this build can send mail at
+      // all, which is a fact about the server, not about the account.
+      setNote(
+        out?.delivery === "email"
+          ? "If that address has an account, a reset link is on its way. It expires in 30 minutes."
+          : "This build has no email provider configured, so no link was sent. " +
+            "The reset link is written to the server log — ask whoever runs this instance for it."
+      );
     });
   };
 
@@ -99,17 +107,17 @@ export default function Login({ onSignedIn, theme, onToggleTheme }) {
           <form className="stack" style={{ padding: 26, gap: 16 }} onSubmit={submitSignup}>
             <div className="stack" style={{ gap: 6 }}>
               <label className="label" htmlFor="name">Full name</label>
-              <input id="name" className="input" value={fullName} placeholder="somebody"
+              <input id="name" className="input" value={fullName} placeholder="Dr. Nguyen Van A"
                      onChange={(e) => setFullName(e.target.value)} autoComplete="name" required />
             </div>
             <div className="stack" style={{ gap: 6 }}>
               <label className="label" htmlFor="su-email">Email</label>
-              <input id="su-email" className="input" type="email" value={email} placeholder="somebody.mail@email.com"
+              <input id="su-email" className="input" type="email" value={email}
                      onChange={(e) => setEmail(e.target.value)} autoComplete="username" required />
             </div>
             <div className="stack" style={{ gap: 6 }}>
               <label className="label" htmlFor="su-password">Password</label>
-              <input id="su-password" className="input" type="password" value={password} placeholder="yourpassword"
+              <input id="su-password" className="input" type="password" value={password}
                      onChange={(e) => setPassword(e.target.value)}
                      autoComplete="new-password" required />
               <div className="muted" style={{ fontSize: 12 }}>At least 8 characters.</div>
@@ -216,6 +224,12 @@ export default function Login({ onSignedIn, theme, onToggleTheme }) {
             </button>
           </form>
         )}
+
+        <div className="disclaimer">
+          <span aria-hidden="true">⚠</span>
+          <div><strong>Decision support only.</strong> The AI can be wrong. Every grade must be
+          confirmed by a clinician before it is used.</div>
+        </div>
       </div>
     </div>
   );
