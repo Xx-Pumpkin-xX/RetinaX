@@ -5,6 +5,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import path from "node:path";
 import { openSync, readSync, closeSync } from "node:fs";
+import { unlink } from "node:fs/promises";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { db, GRADE_LABELS } from "./db.js";
 import { gradeImage, explain } from "./ai.js";
@@ -299,6 +300,48 @@ app.get("/api/cases/:id", auth, (req, res) => {
   res.json({ ...caseRow(row), reviews: reviewHistory(row.CaseID) });
 });
 
+/** Delete a file we are done with, without letting that break the request. */
+async function removeFile(p) {
+  if (!p) return;
+  try {
+    await unlink(path.resolve(p));
+  } catch (err) {
+    if (err.code !== "ENOENT") console.warn("[cleanup] could not remove", p, err.message);
+  }
+}
+
+/**
+ * Drop earlier failed attempts at the same eye once one of them works.
+ *
+ * A failed case holds nothing a clinician can use — no grade, no explanation,
+ * no assessment. It exists so the failure is visible and retryable. Once the
+ * same eye has been graded, the old attempts are just noise in the worklist,
+ * and noise in a worklist is not free: a row that says "grading failed" next
+ * to one that succeeded invites a second look at a patient who has already
+ * been dealt with.
+ *
+ * Deliberately narrow: same doctor, same patient code, same eye, and only rows
+ * that are FAILED. A case that reached any other status is somebody's work.
+ */
+async function dropSupersededFailures(doctorId, patientCode, eye, keepCaseId) {
+  const stale = db
+    .prepare(
+      `SELECT CaseID, ImagePath FROM cases
+        WHERE DoctorID = ? AND PatientCode = ? AND EyePosition = ?
+          AND Status = 'FAILED' AND CaseID <> ?`
+    )
+    .all(doctorId, patientCode, eye, keepCaseId);
+  if (!stale.length) return 0;
+
+  const del = db.prepare("DELETE FROM cases WHERE CaseID = ?");
+  for (const row of stale) {
+    del.run(row.CaseID);
+    await removeFile(row.ImagePath);
+  }
+  console.log(`[cleanup] removed ${stale.length} superseded failed case(s) for ${patientCode} ${eye}`);
+  return stale.length;
+}
+
 app.post("/api/cases", auth, upload.single("image"), async (req, res) => {
   const { patientCode, birthYear, patientSex, eyePosition } = req.body || {};
   if (!req.file) return res.status(400).json({ error: "An image is required" });
@@ -322,6 +365,7 @@ app.post("/api/cases", auth, upload.single("image"), async (req, res) => {
        VALUES (?,?,?,?,?,?)`
     ).run(randomUUID(), id, grade, camPath, ccemPath, new Date().toISOString());
     db.prepare("UPDATE cases SET Status = 'GRADED' WHERE CaseID = ?").run(id);
+    await dropSupersededFailures(req.doctorId, patientCode.trim(), eyePosition, id);
   } catch (err) {
     console.error("grading failed:", err.message);
     db.prepare("UPDATE cases SET Status = 'FAILED' WHERE CaseID = ?").run(id);
@@ -357,6 +401,7 @@ app.post("/api/cases/:id/regrade", auth, async (req, res) => {
        VALUES (?,?,?,?,?,?)`
     ).run(randomUUID(), req.params.id, grade, camPath, ccemPath, new Date().toISOString());
     db.prepare("UPDATE cases SET Status = 'GRADED' WHERE CaseID = ?").run(req.params.id);
+    await dropSupersededFailures(req.doctorId, row.PatientCode, row.EyePosition, req.params.id);
   } catch (err) {
     console.error("re-grading failed:", err.message);
     db.prepare("UPDATE cases SET Status = 'FAILED' WHERE CaseID = ?").run(req.params.id);
@@ -399,6 +444,12 @@ app.post("/api/cases/:id/explain", auth, async (req, res) => {
               HeatmapCcemPath = COALESCE(?, HeatmapCcemPath)
         WHERE CaseID = ?`
     ).run(camPath, ccemPath, req.params.id);
+
+    // Only once the row points at the new files: a crash between writing them
+    // and committing the row would otherwise leave the case pointing at a map
+    // that no longer exists. Orphans are cheap; a broken reference is not.
+    if (camPath) await removeFile(row.HeatmapCamPath);
+    if (ccemPath) await removeFile(row.HeatmapCcemPath);
   } catch (err) {
     console.error("explain failed:", err.message);
     return res.status(502).json({ error: `The grading service could not redraw the explanation: ${err.message}` });
@@ -516,6 +567,18 @@ app.listen(PORT, async () => {
   // the cases it creates, and with an empty doctors table it skips silently.
   // That is how a deployed instance ends up with no demo accounts and no
   // worklist while the local one looks perfect.
+  // Nothing can still be grading after a restart: the request that was waiting
+  // on the model died with the previous process. Left alone, such a case sits
+  // at PROCESSING for ever — the screen polls, the spinner never resolves, and
+  // there is no way out, because retrying is offered only on a failed case.
+  // Marking them failed is both true and actionable.
+  const stuck = db
+    .prepare("UPDATE cases SET Status = 'FAILED' WHERE Status = 'PROCESSING'")
+    .run();
+  if (stuck.changes) {
+    console.log(`[boot] ${stuck.changes} case(s) were still PROCESSING — marked FAILED, retryable`);
+  }
+
   if (process.env.SEED_DEMO === "1") {
     try {
       const { created, ids } = seedDoctors({ quiet: true });
