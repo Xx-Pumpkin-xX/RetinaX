@@ -150,6 +150,3 @@ def predict(img):   # your transform, forward pass, CAM / CCEM
 Then replace `THRESHOLDS = [0.57, 1.48, 2.51, 3.42]` with your Nelder-Mead cut
 points. `GET /health` reporting `model_loaded: true` is how you know the real
 weights are live.
-
-If the model is large, load it **once at import**, not per request — a reload on
-every upload will make the demo look broken.
