@@ -8,7 +8,7 @@ import { openSync, readSync, closeSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { db, GRADE_LABELS } from "./db.js";
-import { gradeImage, explain } from "./ai.js";
+import { gradeImage, explain, aiUrl } from "./ai.js";
 import { sendMail, isConfigured as mailConfigured } from "./mail.js";
 import { seedDemo } from "./seed-demo.js";
 import { seedDoctors } from "./seed.js";
@@ -106,6 +106,40 @@ function issueSession(res, doctorId, keepSignedIn) {
     maxAge: days * 24 * 60 * 60 * 1000,
   });
 }
+
+/**
+ * Liveness probe. Deliberately unauthenticated, because it is what the tunnel,
+ * the status script and any uptime checker call before anyone has a session.
+ *
+ * For that same reason it says nothing an attacker could use: no counts, no
+ * file paths, no hostnames, no configuration values. Only booleans and a
+ * duration. `model` is the one that matters — the API stays up and serves every
+ * existing case when the grading service is down; only new uploads fail.
+ */
+app.get("/api/health", async (_req, res) => {
+  let model = false;
+  try {
+    const r = await fetch(`${aiUrl()}/health`, { signal: AbortSignal.timeout(4000) });
+    model = r.ok && (await r.json())?.model_loaded === true;
+  } catch {
+    model = false;
+  }
+  let database = false;
+  try {
+    db.prepare("SELECT 1").get();
+    database = true;
+  } catch {
+    database = false;
+  }
+  res.set("Cache-Control", "no-store");
+  res.json({
+    ok: database,
+    database,
+    model,
+    mail: mailConfigured(),
+    uptimeSeconds: Math.round(process.uptime()),
+  });
+});
 
 app.post("/api/login", (req, res) => {
   const { email, password, keepSignedIn } = req.body || {};

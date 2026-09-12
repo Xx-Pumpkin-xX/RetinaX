@@ -325,4 +325,58 @@ SETUP.md                  step-by-step first-run guide (Windows + the DGX)
 KNOWN-ISSUES.md           open items, with what a fix would touch
 DEPLOY.md                 step-by-step deployment runbook
 COMMITS.md                suggested commit sequence, split across the team
+tools/
+  sample_aptos.py         pull a balanced sample out of the APTOS set
+  status.sh               "is RetinaX up?" — run it on either host
+LICENSE                   Apache License 2.0
+NOTICE                    attributions, dataset terms, clinical disclaimer
 ```
+
+---
+
+## Checking that it is up
+
+Both services keep running inside tmux, so closing the JupyterLab terminal does
+not stop them. To see the state of everything from either machine, in a terminal
+or in a notebook cell:
+
+```bash
+bash tools/status.sh          # from a terminal
+!bash ~/RetinaX.ai/tools/status.sh    # from a notebook cell
+```
+
+It reports the tmux sessions, what is bound to :8000 and :3000, the model's
+`/health`, the API's `/api/health`, the other machine across Tailscale, and the
+public tunnel. It exits non-zero when something did not answer, so a notebook
+cell shows a red mark. It changes nothing and needs no root.
+
+The two fields worth reading every time:
+
+| field | what a bad value means |
+|---|---|
+| `model_loaded: false` | the checkpoint did not load — existing cases still open, new uploads fail |
+| `thresholds_source: default` | `best_thresholds.npy` was not found, so grades come from naive rounding and are wrong in one direction |
+
+To start whatever is missing:
+
+```bash
+bash server/run-on-host.sh start     # on prts-0
+bash ai/run-on-dgx.sh   start        # on the Spark
+```
+
+---
+
+## Licence
+
+Apache License 2.0 — see [LICENSE](LICENSE).
+
+Apache-2.0 rather than MIT for two reasons that matter for research code: it
+grants patent rights explicitly, and it requires anyone distributing a modified
+version to say that they changed it. Both protect you and the next reader.
+
+[NOTICE](NOTICE) carries the third-party attributions, the terms of the public
+datasets used in development, the papers behind the architecture and the
+explanation methods, and — first, in full — the clinical disclaimer. **RetinaX.ai
+is not a medical device and must not be used to diagnose anyone.** Every OSI
+licence disclaims warranty; none of them says that sentence. For this project it
+belongs in the repository, not only on the screen.

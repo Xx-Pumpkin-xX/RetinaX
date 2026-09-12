@@ -1,0 +1,23 @@
+# Let git decide what is text, and normalise it to LF in the repository.
+# Windows checkouts still get CRLF in the working tree; the stored blobs stay
+# LF, so a Windows and a Linux clone no longer show 66 files as "modified"
+# when nothing was edited.
+* text=auto
+
+# These must be LF in the working tree too, on every platform. They are run by
+# bash on the Linux hosts; a CRLF shebang line makes the kernel look for an
+# interpreter called "/usr/bin/env bash\r", which does not exist, and the only
+# error you get is "bad interpreter".
+*.sh          text eol=lf
+*.py          text eol=lf
+Dockerfile    text eol=lf
+*.env.example text eol=lf
+
+# Never touched: any change to these is a corrupted file.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.zip   binary
+*.npy   binary
+*.pth   binary
+*.tar.gz binary

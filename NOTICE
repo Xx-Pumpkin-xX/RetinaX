@@ -1,0 +1,177 @@
+RetinaX.ai
+Copyright 2026 Nguyen Hai Phong
+
+This product includes software developed as coursework and as a competition
+entry for the University of Science and Technology of Hanoi (USTH).
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file.
+
+
+================================================================================
+1. CLINICAL DISCLAIMER — READ THIS BEFORE USING OR REDISTRIBUTING
+================================================================================
+
+RetinaX.ai IS NOT A MEDICAL DEVICE.
+
+It has not been cleared, approved, certified or registered by any regulatory
+authority, including but not limited to the U.S. Food and Drug Administration,
+the European Union Medical Device Regulation (EU) 2017/745, the UK MHRA, or the
+Vietnamese Ministry of Health. It has not been clinically validated, and it has
+never been evaluated on a prospective patient population.
+
+It must not be used to diagnose, screen, triage, monitor, treat, prevent or
+mitigate diabetic retinopathy or any other disease or condition in any human
+being. It must not be used to make, defer, prioritise or withhold any clinical
+decision.
+
+The grading model is a statistical estimator trained on public research
+datasets. It can be confidently wrong. It has not been characterised on images
+from cameras, populations, or acquisition conditions other than those datasets,
+and its error rate on any real clinic's images is unknown. The explanation
+heatmaps indicate where the model's activations concentrate; they are not
+evidence that a lesion is present, and the absence of a highlight is not
+evidence that a lesion is absent.
+
+The software is provided for research, education and demonstration only. The
+diagnosis of record is always the one made by a qualified clinician, from the
+image itself.
+
+Anyone who deploys this software, in whole or in part, in a setting where its
+output could reach a patient assumes sole responsibility for obtaining the
+regulatory clearance, clinical validation, quality management system and
+professional indemnity that such a deployment requires in their jurisdiction.
+Under Section 7 and Section 8 of the Apache License, Version 2.0, the author
+provides this work WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND and accepts no
+liability for any use of it.
+
+
+================================================================================
+2. DATA
+================================================================================
+
+No real patient images are contained in this repository, and none may be added
+to it. The demo images directory carries its own README saying so.
+
+Development, training and evaluation used the following public datasets. They
+are NOT redistributed here, they are NOT covered by this repository's licence,
+and each is governed by its own terms — obtain them from their own source and
+accept those terms yourself:
+
+  APTOS 2019 Blindness Detection
+    Asia Pacific Tele-Ophthalmology Society, hosted by Kaggle.
+    https://www.kaggle.com/c/aptos2019-blindness-detection
+    Kaggle competition rules apply, including restrictions on commercial use.
+
+  EyePACS / Diabetic Retinopathy Detection
+    EyePACS LLC, hosted by Kaggle.
+    https://www.kaggle.com/c/diabetic-retinopathy-detection
+
+  Messidor-2
+    Methods to Evaluate Segmentation and Indexing Techniques in the field of
+    Retinal Ophthalmology. Kindly provided by the Messidor program partners.
+    https://www.adcis.net/en/third-party/messidor2/
+    Messidor-2 requires acceptance of its own licence agreement and requires
+    that publications using it cite the Messidor programme.
+
+Grading follows the International Clinical Diabetic Retinopathy severity scale
+(grades 0–4: no DR, mild, moderate, severe, proliferative).
+
+
+================================================================================
+3. THIRD-PARTY SOFTWARE
+================================================================================
+
+This product depends on the following third-party components. They are not
+distributed in this repository (they are installed from npm and PyPI at build
+time); each remains under its own licence, reproduced in its own distribution.
+
+Model and inference (Python)
+  PyTorch                                       BSD-3-Clause
+  timm (PyTorch Image Models), R. Wightman      Apache-2.0
+    provides the tf_efficientnet_b7_ns backbone
+  FastAPI, S. Ramirez                           MIT
+  Uvicorn                                       BSD-3-Clause
+  Pillow                                        MIT-CMU (HPND)
+  NumPy                                         BSD-3-Clause
+  OpenCV (opencv-python)                        Apache-2.0
+  Albumentations                                MIT
+  pytorch-grad-cam, J. Gildenblat               MIT
+  Captum, Meta Platforms                        BSD-3-Clause
+
+Application server (Node.js)
+  Express                                       MIT
+  jsonwebtoken                                  MIT
+  bcryptjs                                      MIT
+  cookie-parser                                 MIT
+  multer                                        MIT
+  node:sqlite (Node.js standard library)        MIT
+
+Front end (JavaScript)
+  React, React DOM                              MIT
+  React Router                                  MIT
+  Vite, @vitejs/plugin-react                    MIT
+  lucide-react                                  ISC
+
+Infrastructure
+  Tailscale (userspace networking)              BSD-3-Clause
+  ngrok                                         proprietary, used as a service
+  Cloudflare Pages                              used as a service
+
+
+================================================================================
+4. METHODS AND PUBLICATIONS
+================================================================================
+
+The architecture and the explanation methods implemented here follow published
+research. Attribution below is to the methods, not to code taken from these
+authors; the implementation in this repository is the author's own except where
+it calls the third-party libraries listed in section 3.
+
+  EfficientNet
+    M. Tan and Q. V. Le. "EfficientNet: Rethinking Model Scaling for
+    Convolutional Neural Networks." ICML 2019.
+
+  Noisy Student training (the "_ns" weights)
+    Q. Xie, M.-T. Luong, E. Hovy, Q. V. Le. "Self-training with Noisy Student
+    improves ImageNet classification." CVPR 2020.
+
+  CBAM attention
+    S. Woo, J. Park, J.-Y. Lee, I. S. Kweon. "CBAM: Convolutional Block
+    Attention Module." ECCV 2018.
+
+  Grad-CAM++
+    A. Chattopadhyay, A. Sarkar, P. Howlader, V. N. Balasubramanian.
+    "Grad-CAM++: Generalized Gradient-Based Visual Explanations for Deep
+    Convolutional Networks." WACV 2018.
+
+  Ada-SISE
+    M. Sudhakar, S. Sattarzadeh, K. N. Plataniotis, et al. "Ada-SISE: Adaptive
+    Semantic Input Sampling for Efficient Explanation of Convolutional Neural
+    Networks." ICASSP 2021.
+
+  Integrated Gradients / SmoothGrad (combined here as SmoothIG)
+    M. Sundararajan, A. Taly, Q. Yan. "Axiomatic Attribution for Deep
+    Networks." ICML 2017.
+    D. Smilkov, N. Thorat, B. Kim, F. Viegas, M. Wattenberg. "SmoothGrad:
+    removing noise by adding noise." 2017.
+
+  CLAHE preprocessing
+    K. Zuiderveld. "Contrast Limited Adaptive Histogram Equalization."
+    Graphics Gems IV, 1994.
+
+  Nelder-Mead threshold optimisation
+    J. A. Nelder and R. Mead. "A Simplex Method for Function Minimization."
+    The Computer Journal, 1965.
+
+
+================================================================================
+5. TRADEMARKS
+================================================================================
+
+This licence does not grant permission to use the trade names, trademarks,
+service marks or product names of the author, except as required for reasonable
+and customary use in describing the origin of the work and reproducing the
+content of this NOTICE file.
+
+Names of third-party products above are the trademarks of their respective
+owners and are used here for identification only.
