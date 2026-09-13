@@ -46,3 +46,9 @@ ai/cloudflared
 server/host.env
 server/api.log
 server/tunnel.log
+
+# Deploy artefacts. server/BUILD is stamped at pack time by
+# tools/build-server-tar.sh and describes one particular tar, so committing it
+# would mean every checkout claims to be whatever was last packed.
+server/BUILD
+retinax-server-*.tar.gz

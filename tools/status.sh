@@ -9,7 +9,8 @@
 #   1. the tmux sessions that hold each service
 #   2. whether anything is listening on the two ports, locally
 #   3. the model service   GET /health        (port 8000)
-#   4. the API             GET /api/health    (port 3000)
+#   4. the API             GET /api/health    (port 3000) — including WHICH BUILD
+#      it is running, compared against the checkout you are standing in
 #   5. the other machine across Tailscale, if tailscale is installed
 #   6. the public tunnel, if NGROK_DOMAIN or PUBLIC_URL is set
 #
@@ -76,6 +77,22 @@ for p in "$MODEL_PORT:model" "$API_PORT:api"; do
 done
 
 # ------------------------------------------------------- 3 & 4. the services --
+# Pull one top-level string field out of a JSON body, without needing jq.
+# Tries python3, then node, then a regex — one of the three exists on every
+# machine we run on, and the regex is enough for the flat objects /health emits.
+jsonfield() {  # jsonfield <json> <key>
+  local body=$1 key=$2
+  if command -v python3 >/dev/null 2>&1; then
+    printf '%s' "$body" | python3 -c \
+      "import json,sys;print(json.load(sys.stdin).get('$key',''))" 2>/dev/null && return
+  fi
+  if command -v node >/dev/null 2>&1; then
+    printf '%s' "$body" | node -e \
+      "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{process.stdout.write(String(JSON.parse(s)['$key']??''))}catch{}})" 2>/dev/null && return
+  fi
+  printf '%s' "$body" | sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\{0,1\}\([^,\"}]*\).*/\1/p" | head -1
+}
+
 probe() {  # probe <label> <url>
   local label=$1 url=$2 body
   body=$(curl -fsS -m "$TIMEOUT" -H 'ngrok-skip-browser-warning: 1' "$url" 2>&1)
@@ -97,13 +114,48 @@ grey "— if it says 'default', the Nelder-Mead thresholds did not load and ever
 grey "  grade will be wrong in the same direction."
 
 head2 "API"
-if ! probe "health" "http://localhost:$API_PORT/api/health"; then
-  # older builds have no /api/health; 401 from /api/cases still proves it is up
+API_BODY=$(curl -fsS -m "$TIMEOUT" "http://localhost:$API_PORT/api/health" 2>/dev/null || true)
+if [ -n "$API_BODY" ]; then
+  green "health   http://localhost:$API_PORT/api/health"
+  printf '%s' "$API_BODY" | head -c 400 | sed 's/^/       /'; echo
+else
+  # a build older than the version stamp has no /api/health at all;
+  # a 401 from /api/cases still proves the API is up and authenticating
   code=$(curl -s -o /dev/null -w '%{http_code}' -m "$TIMEOUT" "http://localhost:$API_PORT/api/cases" 2>/dev/null)
   if [ "$code" = "401" ]; then
-    green "api    up on :$API_PORT  (401 from /api/cases — auth is working)"
-    bad=$((bad-1)); ok=$((ok+1))
+    green "api      up on :$API_PORT  (401 from /api/cases — auth is working)"
+    grey "no /api/health — this box predates the version stamp, so it is behind."
+  else
+    red "health   no answer   http://localhost:$API_PORT/api/health"
   fi
+fi
+
+# ------------------------------------------------------------- 4b. build ----
+head2 "which build is the API running"
+if [ -n "$API_BODY" ]; then
+  RUN_VER=$(jsonfield "$API_BODY" version)
+  RUN_SHA=$(jsonfield "$API_BODY" commit)
+  RUN_BRANCH=$(jsonfield "$API_BODY" branch)
+  RUN_BUILT=$(jsonfield "$API_BODY" builtAt)
+  RUN_HOW=$(jsonfield "$API_BODY" packedBy)
+  grey "version  ${RUN_VER:-unknown}"
+  grey "commit   ${RUN_SHA:-unknown} on ${RUN_BRANCH:-unknown}"
+  grey "built    ${RUN_BUILT:-unknown}   (deployed by ${RUN_HOW:-unknown})"
+
+  # Only meaningful when this machine also holds the source.
+  if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+    HEAD_SHA=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo "")
+    if [ -z "$RUN_SHA" ] || [ "$RUN_SHA" = "unknown" ]; then
+      grey "checkout here is $HEAD_SHA; the server does not report a commit."
+    elif [ "$RUN_SHA" = "$HEAD_SHA" ]; then
+      green "matches the checkout here ($HEAD_SHA)"
+    else
+      red "BEHIND — this checkout is $HEAD_SHA, the server is running $RUN_SHA"
+      grey "rebuild and redeploy:  bash tools/build-server-tar.sh"
+    fi
+  fi
+else
+  red "cannot tell — the API did not answer"
 fi
 
 # ----------------------------------------------------------- 5. the peer -----

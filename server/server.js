@@ -13,6 +13,7 @@ import { sendMail, isConfigured as mailConfigured } from "./mail.js";
 import { seedDemo } from "./seed-demo.js";
 import { seedDoctors } from "./seed.js";
 import { UPLOAD_DIR } from "./paths.js";
+import { VERSION, versionLine } from "./version.js";
 
 const PORT = process.env.PORT || 3000;
 const SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
@@ -134,10 +135,12 @@ app.get("/api/health", async (_req, res) => {
   res.set("Cache-Control", "no-store");
   res.json({
     ok: database,
+    ...VERSION,
     database,
     model,
     mail: mailConfigured(),
     uptimeSeconds: Math.round(process.uptime()),
+    node: process.version,
   });
 });
 
@@ -726,6 +729,7 @@ app.use((err, _req, res, _next) => {
 
 app.listen(PORT, async () => {
   console.log(`RetinaX API on http://localhost:${PORT}`);
+  console.log(`[boot] build ${versionLine()} — ${VERSION.packedBy}`);
   // Free hosts wipe the disk on restart. This puts the demo data back.
   //
   // The doctors come first and are not optional: seedDemo() needs an owner for
