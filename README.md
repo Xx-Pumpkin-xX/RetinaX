@@ -262,7 +262,7 @@ or in a notebook cell:
 
 ```bash
 bash tools/status.sh          # from a terminal
-!bash ~/RetinaX.ai/tools/status.sh    # from a notebook cell
+!bash ~/tools/status.sh               # from a notebook cell on prts-0
 ```
 
 It reports the tmux sessions, what is bound to :8000 and :3000, the model's

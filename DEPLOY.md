@@ -149,12 +149,17 @@ Drag the `.tar.gz` into JupyterLab on `prts-0`, into your home directory.
 ### 2.3 Unpack and restart (on `prts-0`)
 
 ```bash
-cd ~/RetinaX.ai
+cd ~                                    # server/ and tools/ sit here, not in a repo folder
 tar xzf ~/retinax-server-v1.0.0.tar.gz
 bash server/run-on-host.sh stop
 bash server/run-on-host.sh start
 bash tools/status.sh
 ```
+
+`prts-0` has no git checkout, so there is no `RetinaX.ai` directory there — the
+tar unpacks `server/` and `tools/` straight into your home directory. `$VAR_DIR`
+points at `~/retinax-data`, outside both, which is why unpacking cannot reach the
+database.
 
 There is no `restart` subcommand — stop then start. `run-on-host.sh` runs the API
 inside `tmux`, so it survives you closing the JupyterLab tab. `logs` tails it,
@@ -208,7 +213,7 @@ Changing `JWT_SECRET` signs everyone out. That is the correct response to a leak
 something under `ai/` changed. Day to day you just check it is up.
 
 ```bash
-cd ~/RetinaX.ai
+cd ~
 bash ai/run-on-dgx.sh status
 ```
 
@@ -266,7 +271,7 @@ and the public tunnel. It exits non-zero when something did not answer, so from 
 notebook cell you get a red mark:
 
 ```python
-!bash ~/RetinaX.ai/tools/status.sh
+!bash ~/tools/status.sh
 ```
 
 It changes nothing and needs no root. Override ports if you have to:
@@ -305,7 +310,7 @@ Step 6 is the demo. Lead with it.
 Keep the previous tar. Rolling back is unpacking it and restarting:
 
 ```bash
-cd ~/RetinaX.ai
+cd ~
 tar xzf ~/retinax-server-<previous>.tar.gz
 bash server/run-on-host.sh stop && bash server/run-on-host.sh start
 bash tools/status.sh          # confirm the version went back

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api.js";
 
 // One screen, three states. The reset state is entered by the link in the
@@ -81,6 +82,14 @@ export default function Login({ onSignedIn, theme, onToggleTheme }) {
   return (
     <div className="stack" style={{ minHeight: "100vh", alignItems: "center", justifyContent: "center", padding: 22 }}>
       <div className="stack" style={{ width: 400, gap: 22 }}>
+        {/* A way back out. Someone who reached this screen by clicking "Sign in"
+            on the landing page, or by being redirected here, otherwise has only
+            the browser's back button — and after a redirect that lands them
+            here again. */}
+        <Link to="/" className="linkish" style={{ alignSelf: "flex-start", fontSize: 13 }}>
+          ← Back to RetinaX.ai
+        </Link>
+
         <div className="row" style={{ justifyContent: "space-between" }}>
           <div className="stack" style={{ gap: 4 }}>
             <div style={{ fontSize: 26, fontWeight: 600, letterSpacing: "-0.5px" }}>

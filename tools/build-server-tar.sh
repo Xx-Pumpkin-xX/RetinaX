@@ -14,7 +14,7 @@
 #
 # Then upload the tar to prts-0 through JupyterLab and, on prts-0:
 #
-#     cd ~/RetinaX.ai
+#     cd ~          # on prts-0 server/ and tools/ live in $HOME, not in a repo dir
 #     tar xzf ~/retinax-server-<version>.tar.gz
 #     bash server/run-on-host.sh stop
 #     bash server/run-on-host.sh start
