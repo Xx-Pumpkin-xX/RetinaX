@@ -123,126 +123,45 @@ the regression output into a grade. Replace them with yours. `/health` reports
 
 ## Deployment
 
-**`DEPLOY.md` is the step-by-step runbook.** What follows is the reference.
+**[DEPLOY.md](DEPLOY.md) is the runbook. Read its first section before running
+anything** — every command is labelled with the machine it belongs on, and most
+mistakes on this project have been the right command on the wrong machine.
 
-The shape: front end on **Vercel**, API on **Render**, and the grading service on
-the lab machine that already holds the weights, reached over a Cloudflare tunnel.
-Render's free instance has 512 MB of RAM and PyTorch does not fit in it, which is
-why the model is not deployed next to the API.
+The shape, in one table:
 
-### 1 · Front end — Vercel *or* Netlify *or* Cloudflare Pages
+| Machine | Runs | Deployed by |
+|---|---|---|
+| **`prts`** (your Windows PC) | git, the source of truth | nothing serves here |
+| **Cloudflare Pages** | the React front end, `retinax.pages.dev` | automatically, on every push to `main` |
+| **`prts-0`** (always-on Linux) | the API `:3000`, SQLite, the uploaded images | `tools/build-server-tar.sh` → upload → unpack |
+| **`spark-063e`** (DGX Spark) | the grading model `:8000`, the `.pth`, the GPU | rarely; only when `ai/` changes |
 
-Any of the three works; the repo carries config for all of them.
+A request goes: browser → Pages → a Pages Function proxying `/api/*` → the tunnel
+→ `prts-0` → (only on upload) the Spark, over Tailscale.
 
-| | Setting |
-|---|---|
-| Root directory | `web` |
-| Build command | `npm run build` |
-| Output directory | `dist` |
-| Environment variable | `VITE_API_URL` = your deployed API URL (no trailing slash) |
+Three things that are load-bearing and non-obvious:
 
-`web/vercel.json` and `web/public/_redirects` both do the same job — send every
-unknown path to `index.html`. Without one of them, a refresh on `/cases/abc`
-returns 404, because there is no such file: the router lives in the browser.
+- **The `/api/*` proxy is not an optimisation.** Without it the page and the API
+  are on different origins, so the session cookie is third-party — blocked by
+  Safari always, Firefox by default, Chrome in incognito. Login appears to
+  succeed (the name came back in the body) and every later request is 401.
+- **`VITE_API_URL` must stay unset in Pages.** `src/api.js` falls back to `""`,
+  which makes calls same-origin so the proxy picks them up. Setting it bypasses
+  the proxy and brings the cookie bug back. `API_ORIGIN` is the variable that
+  matters, and it points at the tunnel in front of `prts-0`.
+- **The data lives only on `prts-0`.** The database and every uploaded image are
+  under `$VAR_DIR` there. The deploy tar deliberately excludes them, so unpacking
+  over a running install cannot destroy them — the build script checks the packed
+  archive rather than trusting its own exclude list.
 
-`VITE_API_URL` is read **at build time**, not at runtime. Change it and you must
-redeploy.
+This replaced an earlier Render deployment, whose free instance wiped its disk on
+every restart and took the uploads with it. Do not put the API back on a host
+with ephemeral storage.
 
-### 2 · API — Render *or* Railway
-
-`render.yaml` in the repo root is a Render blueprint; import it and Render fills
-in the settings. By hand, or on Railway:
-
-| | Setting |
-|---|---|
-| Root directory | `server` |
-| Build command | `npm ci` |
-| Start command | `node server.js` |
-
-Environment variables:
-
-| Variable | Value |
-|---|---|
-| `NODE_ENV` | `production` — **this one matters, see below** |
-| `JWT_SECRET` | a long random string |
-| `WEB_ORIGIN` | the deployed front-end URL, exactly, no trailing slash |
-| `AI_URL` | where the grading service runs |
-| `SEED_DEMO` | `1` to re-create demo cases on every boot |
-
-**The cross-domain cookie trap.** The session cookie is `httpOnly`. Once the
-front end and the API are on different domains, a browser only accepts it with
-`SameSite=None; Secure`. `server.js` switches to that when `NODE_ENV=production`.
-Forget the variable and login silently fails in production while working
-perfectly on localhost — this is the single most common way this deploy breaks.
-
-### 2b · Grading service — the lab machine, behind a tunnel
-
-`uvicorn main:app --host 0.0.0.0 --port 8000` on the machine that has the `.pth`,
-with `cloudflared tunnel --url http://localhost:8000` in front of it. Set the URL
-it prints as `AI_URL` on Render. Quick-tunnel URLs change on restart; updating
-the variable is a twenty-second job.
-
-If that machine is asleep, the deployed demo still comes up fully populated:
-`server/demo-images/precomputed/` holds a committed grade and heatmap for each
-demo image, and seeding falls back to them when the live service cannot be
-reached. Only grading a *new* upload requires the machine to be awake, and that
-failure is shown honestly rather than faked.
-
-Run `npm run precompute` once, locally, with the service up, whenever you change
-the demo images — then commit `demo-images/precomputed/`.
-
-### 3 · Database
-
-Currently **SQLite**, a single file at `server/data/retinax.db`. On Node 22+ it is
-reached through `node:sqlite`, built into Node — no native addon, no compiler,
-nothing to fail on a fresh machine. `better-sqlite3` remains an optional
-dependency and is used only on Node 20, where `node:sqlite` does not exist.
-This is a deliberate choice for a three-day build: no network hop, no connection
-pool, no second dashboard to configure, and the whole database is one file you
-can copy.
-
-It has one real cost, and it is worth stating plainly: **free tiers on Render and
-Railway have an ephemeral filesystem.** On restart — including the automatic
-sleep/wake cycle — the database file and every uploaded image are gone. Three
-ways to live with that:
-
-- **Boot re-seeding (what is wired up now).** `SEED_DEMO=1` re-creates the demo
-  cases from `server/demo-images/` at every boot. The demo is never empty in
-  front of a judge. Anything uploaded during a session is still lost on restart.
-- **A persistent disk.** Render supports one; it is a paid plan. The block is in
-  `render.yaml`, commented out. This is the smallest change that makes uploads
-  survive.
-- **Supabase Postgres.** Managed, free tier, survives everything, and matches the
-  "Setup Database" line in the course checklist directly. It means rewriting the
-  queries in `server/db.js` and `server/server.js` from `better-sqlite3` to `pg`,
-  and moving image storage to Supabase Storage. Roughly half a day.
-
-The first option is what is deployed. The third is the one to pick if the
-database itself is being marked.
-
-### 4 · Domain and SSL
-
-Vercel, Netlify, Cloudflare Pages and Render all issue and renew Let's Encrypt
-certificates automatically on both their own subdomains and custom domains. There
-is nothing to configure. What to actually check after deploying:
-
-- the site loads over `https://` with no browser warning;
-- **no mixed content** — an `http://` API URL on an `https://` page is blocked by
-  the browser, and this is what `VITE_API_URL` gets wrong most often;
-- `WEB_ORIGIN` on the API matches the front-end URL character for character,
-  including `https://` and no trailing slash, or CORS rejects every request.
-
-For a custom domain: add it in the host's dashboard, point a `CNAME` at the value
-they give you, wait for DNS, and the certificate is issued on its own.
-
-### 5 · Repository
-
-`.gitignore` keeps `node_modules/`, the database, uploaded images and the `.pth`
-out of the repo. `server/demo-images/` **is** committed on purpose — it is the
-only thing the deployed instance can re-seed itself from, so it must contain
-public-dataset images and never real patient photographs.
-
-See `COMMITS.md` for the commit sequence.
+`server/demo-images/` **is** committed on purpose — it is the only thing a fresh
+instance can re-seed itself from, so it must hold public-dataset images and never
+real patient photographs. `.gitignore` keeps `node_modules/`, the database, the
+uploads, the `.pth`, every `.env` and the deploy tars out of the repo.
 
 ---
 
@@ -320,14 +239,15 @@ server/
 ai/
   main.py                 /infer and /health
   requirements.txt
-render.yaml               Render blueprint for the API
+render.yaml               legacy Render blueprint — superseded, see DEPLOY.md
 SETUP.md                  step-by-step first-run guide (Windows + the DGX)
 KNOWN-ISSUES.md           open items, with what a fix would touch
 DEPLOY.md                 step-by-step deployment runbook
 COMMITS.md                suggested commit sequence, split across the team
 tools/
   sample_aptos.py         pull a balanced sample out of the APTOS set
-  status.sh               "is RetinaX up?" — run it on either host
+  status.sh               "is RetinaX up, and which build?" — any host
+  build-server-tar.sh     pack the API for prts-0, stamped with its commit
 LICENSE                   Apache License 2.0
 NOTICE                    attributions, dataset terms, clinical disclaimer
 ```
@@ -350,6 +270,20 @@ It reports the tmux sessions, what is bound to :8000 and :3000, the model's
 public tunnel. It exits non-zero when something did not answer, so a notebook
 cell shows a red mark. It changes nothing and needs no root.
 
+**It also tells you which build the API is running**, which used to be
+unanswerable — `tools/build-server-tar.sh` stamps the version, commit and build
+time into the tar, and `/api/health` reports them back:
+
+```
+which build is the API running
+     version  v1.0.0
+     commit   3807b12 on main
+     built    2026-09-13T02:31:44Z   (deployed by tar)
+```
+
+Run it from a git checkout and it compares that commit against your HEAD, so
+"is prts-0 running what I just pushed?" stops being a guess.
+
 The two fields worth reading every time:
 
 | field | what a bad value means |
@@ -363,6 +297,10 @@ To start whatever is missing:
 bash server/run-on-host.sh start     # on prts-0
 bash ai/run-on-dgx.sh   start        # on the Spark
 ```
+
+Which command belongs on which machine — and how a deploy actually works — is in
+[DEPLOY.md](DEPLOY.md). Read its first section before running anything; most
+mistakes on this project have been the right command on the wrong machine.
 
 ---
 

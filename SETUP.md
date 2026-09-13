@@ -267,8 +267,12 @@ Commit `server\demo-images\precomputed\` afterwards. Those committed answers are
 what keep the deployed demo populated when the Spark is asleep.
 
 **Quick-tunnel URLs change every restart.** After a reboot, run
-`./run-on-dgx.sh url` and update `AI_URL` — locally in `.env`, and on Render once
-you have deployed.
+`./run-on-dgx.sh url` and update `AI_URL` in your local `.env`.
+
+The deployed setup has no tunnel to the model at all: `prts-0` reaches
+`spark-063e` privately over Tailscale at `http://spark-063e:8000`, and that
+address does not change. The model service has no authentication, so keeping it
+off the public internet is not a preference. See [DEPLOY.md](DEPLOY.md).
 
 ---
 
@@ -397,9 +401,10 @@ Startup should print `[startup] ready — REAL MODEL` and the thresholds
 `[0.565, 1.441, 2.375, 3.042]`. `curl http://localhost:8000/health` confirms
 `"model_loaded": true`.
 
-**4 — point the deployed site at it (optional).** Run ngrok against port 8000
-with the same static domain; `AI_URL` on Render does not change, only what sits
-behind the hostname. Or run the whole stack locally and demo offline.
+**4 — point the deployed site at it (optional).** In the deployed setup the
+tunnel fronts the *API* on `prts-0`, not the model, and `AI_URL` there is the
+Spark's Tailscale address — so there is nothing to update when you restart the
+model. Or run the whole stack locally and demo offline.
 
 ### Two things that will bite
 

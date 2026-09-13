@@ -1,143 +1,69 @@
-# Deploying RetinaX.ai
+# Deploying and running RetinaX.ai
 
-**Live as of 8 September 2026:**
-
-```
-Cloudflare Pages  web/     the doctor's screens     https://retinax.pages.dev
-Render (free)     server/  API, database, images    https://retinax-api.onrender.com
-DGX Spark         ai/      the model and the .pth   https://acuteness-finless-pluck.ngrok-free.dev
-```
-
-Verified in a browser after the first Pages build: the site loads, and its
-`/api/me` call returns **401 rather than a CORS error** — which is what proves
-the chain is wired, since a mismatched `WEB_ORIGIN` fails before any status code
-is readable. `/cases/<id>` served `index.html` and the router redirected to
-login, so the SPA fallback works.
-
-**The first two do not need the Spark.** Deploy them now, with `AI_URL` pointing
-at a tunnel that may well be down: the site still loads, signs in, and browses
-cases, because the demo cases carry committed grades and heatmaps. Only a *new
-upload* needs the model, and that is the part you demo in person.
-
-The model stays on the DGX Spark, which already has the weights and the dataset. It
-is reached over a tunnel, so nothing has to be copied and no GPU has to be
-rented. Render's free instance has 512 MB of RAM — PyTorch alone does not fit in
-it, which is why the model is not deployed alongside the API.
-
-Do the three parts **in this order**. Each one needs the URL of the one before it.
+Read the first section before touching anything. Almost every mistake on this
+project has been doing the right command on the wrong machine.
 
 ---
 
-## 0 · Push to GitHub first
+## The three machines
 
-```bash
-cd retinax
-git init
-git add .
-git commit -m "chore: repository setup, ignore rules and README"
-git branch -M main
-git remote add origin https://github.com/<user>/retinax.git
-git push -u origin main
+| Name | What it is | What runs there | You reach it by |
+|---|---|---|---|
+| **`prts`** | your Windows PC | git, the source of truth. Nothing serves traffic here. | PowerShell, or Git Bash for the `.sh` scripts |
+| **`prts-0`** | the always-on Linux host | the **API** on `:3000` — Express, the SQLite database, and every uploaded image | JupyterLab terminal · Tailscale `100.75.0.83` |
+| **`spark-063e`** | the DGX Spark | the **grading model** on `:8000` — FastAPI, the `.pth`, the GPU | JupyterLab terminal · Tailscale `100.126.54.48` |
+
+Plus one thing that is not a machine: **Cloudflare Pages** serves the front end
+at `https://retinax.pages.dev` and builds it automatically from whatever you push
+to GitHub.
+
+Three rules that follow from the table, and save the most time:
+
+1. **All git happens on `prts`.** Neither Linux box has a checkout or talks to
+   GitHub. They receive code as a tar.
+2. **`prts-0` holds the only copy of the data.** The database and the uploaded
+   fundus images live there and nowhere else. Nothing in a deploy may overwrite
+   them — see the exclusion list in step 2.
+3. **The Spark is reached privately**, over Tailscale, from `prts-0`. The model
+   service has no authentication of any kind, so it must never be exposed to the
+   public internet.
+
+### How a request actually travels
+
+```
+browser  ->  retinax.pages.dev          Cloudflare Pages: the React build
+         ->  /api/*                     a Pages Function proxies it, same-origin
+         ->  API_ORIGIN (ngrok)         the tunnel in front of prts-0
+         ->  prts-0:3000                Express, SQLite, the images
+         ->  spark-063e:8000            the model, over Tailscale, only on upload
 ```
 
-Before pushing, run `git status` and confirm you do **not** see `node_modules/`,
-`server/data/`, `server/uploads/`, `.env`, or a `.pth`. A file committed once
-stays in the history even after you delete it.
+The proxy hop exists for one reason. Without it the page is on `pages.dev` and
+the API is on a tunnel hostname, so the session cookie is a **third-party**
+cookie: Safari blocks those outright, Firefox by default, Chrome in incognito.
+The symptom is nasty — login appears to succeed, because the doctor's name came
+back in the response body, and then every request after it is 401 because the
+cookie was never stored. Proxied, the browser only ever sees one origin, the
+cookie is first-party, and CORS stops applying at all.
 
-`COMMITS.md` has the 20-commit sequence if you want the history split across the
-team rather than one big commit — the course marks this, so it is worth the hour.
+> **Why not Render, as the old version of this file said?** Render's free
+> instance wipes its disk on every restart, so uploaded images and the database
+> did not survive a deploy. `prts-0` is always on and keeps them. Do not put the
+> API back on a host with ephemeral storage.
 
 ---
 
-## 1 · The grading service, on the DGX Spark
+## 1 · The front end — on `prts`, deployed by Cloudflare
 
-```bash
-cd ai
-python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
-pip install -r requirements.txt      # fastapi, pillow, numpy — NOT torch
-./run-on-dgx.sh
+There is nothing to run by hand. Pushing to `main` triggers the build.
+
+```powershell
+cd D:\DR_project\RetinaX.ai
+git push
 ```
 
-`run-on-dgx.sh` starts uvicorn on `0.0.0.0:8000` and a Cloudflare tunnel in front
-of it, both inside `tmux` so they survive your SSH session ending, and prints the
-public URL. `./run-on-dgx.sh url` prints it again later; `stop` stops both.
-
-**Do not `pip install torch` on that machine.** The Spark is arm64 with a Grace
-Blackwell GPU. The default PyPI wheel is the wrong build and will install
-alongside the working PyTorch already there — the failure looks like
-`torch.cuda.is_available()` going false, and it costs an afternoon. That is why
-`requirements.txt` deliberately omits it. Run the check above first; if it
-already prints a version and `True`, install nothing else.
-
-Check the service: `curl localhost:8000/health` should answer
-`{"ok":true,"model_loaded":true}` once the real `.pth` is loaded. While it still
-says `false` you are running the stand-in.
-
-Quick-tunnel URLs **change on every restart**. If the machine reboots, run
-`./run-on-dgx.sh url` and paste the new one into `AI_URL` on Render — twenty
-seconds, and it redeploys automatically.
-
-**If the tunnel is down, the demo still works.** The demo cases carry
-precomputed grades and heatmaps committed in `server/demo-images/precomputed/`,
-so the deployed app comes back up fully populated either way. What stops working
-is grading a *new* upload. That failure is visible and honest — the case shows
-as failed rather than silently inventing a grade.
-
----
-
-## 2 · The API, on Render
-
-New → Blueprint → point it at the repo. `render.yaml` fills in the rest.
-By hand: New → Web Service, root directory `server`, build `npm ci`, start
-`node server.js`.
-
-**If Render asks for a payment card, the blueprint is missing `plan: free`.**
-A service in `render.yaml` with no `plan:` defaults to Starter, which is paid,
-so Render stops at the card form before it will apply anything. The line is in
-`render.yaml` now — if you still see the form, check the plan dropdown on the
-service is *Free* rather than adding a card. Render does not require a card for
-a free web service.
-
-Environment variables:
-
-| Variable | Value |
-|---|---|
-| `NODE_ENV` | `production` |
-| `JWT_SECRET` | let Render generate one |
-| `WEB_ORIGIN` | your Vercel URL — **exactly**, `https://`, no trailing slash |
-| `AI_URL` | the `trycloudflare.com` URL from step 1, no trailing slash |
-| `SEED_DEMO` | `1` |
-
-You do not have the Vercel URL yet. Put `https://retinax.vercel.app` in for now
-and correct it in step 3 — Vercel's project URL is predictable from the project
-name, so it is usually right first time.
-
-### Two failure modes, both worth knowing before they happen
-
-**The cookie.** The session cookie is `httpOnly`. Once the front end and the API
-are on different domains, a browser only accepts it with `SameSite=None; Secure`.
-`server.js` switches to that when `NODE_ENV=production`. Forget that variable and
-login fails in production while working perfectly on localhost, with no error in
-the console — the request just comes back 401 and the cookie is silently dropped.
-
-**CORS.** `WEB_ORIGIN` must match the front-end URL character for character.
-`https://retinax.vercel.app/` with the trailing slash does not match
-`https://retinax.vercel.app` and every request is rejected.
-
-Check the deploy: `curl https://retinax-api.onrender.com/api/cases` should return
-`{"error":"Not signed in"}`. That is the API alive and refusing you correctly.
-
-### The free instance sleeps
-
-After 15 minutes idle, Render suspends the instance and the next request takes
-30–50 seconds to wake it. Open the site once a few minutes before you demo.
-The disk is also wiped on that restart — which is what `SEED_DEMO=1` is for.
-
----
-
-## 3 · The front end, on Cloudflare Pages
-
-Workers & Pages → Create → Pages → Connect to Git → pick the repo.
+First-time project setup, in the Cloudflare dashboard — Workers & Pages → Create
+→ Pages → Connect to Git:
 
 | Setting | Value |
 |---|---|
@@ -149,68 +75,207 @@ Workers & Pages → Create → Pages → Connect to Git → pick the repo.
 The root directory is the one people miss. Leave it blank and Cloudflare builds
 from the repository root, finds no `package.json`, and fails.
 
-One environment variable, under Settings → Environment variables → **Production**:
+Environment variables, under Settings → Environment variables → **Production**:
 
 | Variable | Value |
 |---|---|
-| `VITE_API_URL` | your Render URL, e.g. `https://retinax-api.onrender.com`, no trailing slash |
+| `API_ORIGIN` | the tunnel in front of `prts-0`, e.g. `https://acuteness-finless-pluck.ngrok-free.dev` — **no trailing slash** |
+| `VITE_API_URL` | **leave unset** |
 
-**`VITE_API_URL` is read at build time, not at runtime.** Adding it in the
-dashboard does nothing to a build that already happened — you must **Retry
-deployment** afterwards. This is the single most confusing thing about Vite on
-any static host, and it looks exactly like "the API is down".
+`VITE_API_URL` must stay empty. `web/src/api.js` falls back to `""`, which makes
+every call same-origin `/api/...`, which is what the Pages Function picks up. Set
+it to the tunnel and you bypass the proxy and reintroduce the third-party-cookie
+bug described above.
 
-`web/public/_redirects` sends unknown paths to `index.html`. Without it,
-refreshing on `/cases/abc` returns 404 — there is no such file; the router lives
-in the browser. (`web/vercel.json` does the same job if you ever switch to
-Vercel; Cloudflare ignores it.)
+Two things that behave unintuitively here:
 
-Now go back to Render and set `WEB_ORIGIN` to the real
-`https://<project>.pages.dev` URL.
+- **`VITE_API_URL` is read at build time, not run time.** Changing any `VITE_*`
+  variable does nothing to a build that already happened — you must **Retry
+  deployment**. This looks exactly like "the API is down".
+- **`web/public/_redirects`** sends unknown paths to `index.html`. Without it,
+  refreshing on `/cases/abc` returns 404 — there is no such file, the router
+  lives in the browser.
 
-### Preview deployments will not work, and that is fine
-
-Cloudflare gives every branch its own `https://<hash>.retinax.pages.dev`. Those
-hostnames will fail CORS, because `WEB_ORIGIN` on Render names exactly one
-origin. Demo from the production URL. If you genuinely need previews, the API
-would have to accept a list of origins rather than one.
+Branch previews get their own `https://<hash>.retinax.pages.dev`. They work,
+because the proxy makes the API same-origin, but demo from the production URL.
 
 ---
 
-## 4 · Domain and SSL
+## 2 · The API — built on `prts`, unpacked on `prts-0`
 
-Vercel and Render both issue and renew Let's Encrypt certificates automatically,
-on their own subdomains and on custom domains. There is nothing to configure.
-What to actually check:
+### 2.1 Build the tar (on `prts`, Git Bash)
 
-- the site loads over `https://` with no browser warning;
-- **no mixed content** — an `http://` value in `VITE_API_URL` on an `https://`
-  page is blocked by the browser outright. This is the most common mistake here;
-- open DevTools → Application → Cookies after signing in, and confirm the `rx`
-  cookie is present with `Secure` and `SameSite=None`.
+```bash
+cd /d/DR_project/RetinaX.ai
+git status            # commit first — the stamp records the commit
+bash tools/build-server-tar.sh
+```
 
-A custom domain, if you want one: add it in the Vercel dashboard, point a `CNAME`
-at the value they give you, wait for DNS, and the certificate issues itself.
+It prints what it made:
 
----
+```
+retinax-server-v1.0.0.tar.gz
+  version   v1.0.0
+  commit    3807b12 on main
+  built     2026-09-13T02:31:44Z
+  demo imgs excluded (--with-demo-images to add)
+  size      44K
+```
 
-## 4b · Verified before you start
+The script writes `server/BUILD` into the tar with that version, commit, branch
+and timestamp. **That stamp is the whole point** — it is how `prts-0` can tell
+you which code it is running instead of you guessing from behaviour. Commit
+before packing, or the version reads `-dirty` and the commit is meaningless.
 
-The deployed state — **API up, grading service unreachable** — was tested
-directly, and everything a judge would touch still works:
+Add `--with-demo-images` only on a first deploy to a fresh box; they rarely
+change and they are the bulk of the size.
 
-| | |
+**What the tar never contains**, verified by listing the packed archive rather
+than trusting the exclude list — the script deletes the tar and exits non-zero if
+an env file appears in it anyway:
+
+- `server/.env`, `server/host.env`, `ai/dgx.env` — secrets
+- `server/data/` — **the database**
+- `server/uploads/` — **the fundus images**
+- `server/node_modules/`
+
+So unpacking over a running install cannot destroy the data. That is deliberate,
+and it is why the exclusion list is checked rather than assumed.
+
+### 2.2 Upload it
+
+Drag the `.tar.gz` into JupyterLab on `prts-0`, into your home directory.
+
+### 2.3 Unpack and restart (on `prts-0`)
+
+```bash
+cd ~/RetinaX.ai
+tar xzf ~/retinax-server-v1.0.0.tar.gz
+bash server/run-on-host.sh stop
+bash server/run-on-host.sh start
+bash tools/status.sh
+```
+
+There is no `restart` subcommand — stop then start. `run-on-host.sh` runs the API
+inside `tmux`, so it survives you closing the JupyterLab tab. `logs` tails it,
+`status` is the short version of `status.sh`.
+
+No `npm install` is needed unless `package.json` changed; the tar carries the
+lockfile so you can tell.
+
+### 2.4 Confirm the right code is live
+
+`tools/status.sh` now answers this directly:
+
+```
+which build is the API running
+     version  v1.0.0
+     commit   3807b12 on main
+     built    2026-09-13T02:31:44Z   (deployed by tar)
+```
+
+Run it on `prts` in Git Bash and it goes further — it compares that commit
+against your checkout:
+
+```
+  -- BEHIND — this checkout is 259b937, the server is running 3807b12
+     rebuild and redeploy:  bash tools/build-server-tar.sh
+```
+
+`packedBy: source` instead of `tar` means somebody copied files by hand rather
+than deploying a tar. Worth knowing before you debug anything.
+
+### 2.5 Configuration on `prts-0`
+
+`server/host.env` — never committed, see `server/host.env.example`:
+
+| Variable | What it is |
 |---|---|
-| login with `NODE_ENV=production` | cookie is `HttpOnly; Secure; SameSite=None` |
-| CORS headers | present, matching `WEB_ORIGIN` |
-| worklist with the AI dead | loads, all cases present |
-| both heatmaps | served, 200 `image/png` |
-| BR-3, a disagreement with no reason | refused |
-| BR-4, after correcting to 4 | model's grade still 2 |
-| a new upload with the AI dead | honest 502 in 0.13 s, case marked FAILED |
+| `VAR_DIR` | where the database and uploads live. **Point it outside the unpack directory** so a deploy can never reach it. |
+| `AI_URL` | `http://spark-063e:8000` — the model, over Tailscale |
+| `WEB_ORIGIN` | `https://retinax.pages.dev` |
+| `JWT_SECRET` | a real random value. If it is still the placeholder, every session token is forgeable. |
+| `NGROK_DOMAIN` | the reserved domain fronting this host |
+| `RESEND_API_KEY`, `MAIL_FROM` | password-reset email; without them the app says plainly that it cannot send |
 
-So the only thing a dead tunnel costs you is grading new uploads. Everything
-else — the part a judge browses unattended — is unaffected.
+Changing `JWT_SECRET` signs everyone out. That is the correct response to a leak.
+
+---
+
+## 3 · The model — on `spark-063e`
+
+**Usually there is nothing to do here.** The model only needs deploying when
+something under `ai/` changed. Day to day you just check it is up.
+
+```bash
+cd ~/RetinaX.ai
+bash ai/run-on-dgx.sh status
+```
+
+To start it:
+
+```bash
+bash ai/run-on-dgx.sh start
+```
+
+`run-on-dgx.sh` starts uvicorn on `0.0.0.0:8000` inside `tmux`. With
+`TUNNEL=0` and `SERVE_API=0` — the correct settings now that the API lives on
+`prts-0` — it starts the model and nothing else, and `prts-0` reaches it across
+Tailscale rather than over the public internet.
+
+**Do not `pip install torch` on that machine.** The Spark is arm64 with a Grace
+Blackwell GPU. The default PyPI wheel is the wrong build and installs alongside
+the working PyTorch already there; the failure looks like
+`torch.cuda.is_available()` going false, and it costs an afternoon. Check first,
+and if it prints a version and `True`, install nothing:
+
+```bash
+python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+```
+
+`ai/requirements.txt` deliberately omits torch for this reason.
+
+### The two fields to read every single time
+
+```bash
+curl -s localhost:8000/health
+```
+
+| Field | A bad value means |
+|---|---|
+| `model_loaded: false` | the checkpoint did not load. Existing cases still open fine; **new uploads fail**, visibly, as FAILED cases. |
+| `thresholds_source: default` | `best_thresholds.npy` was not found, so grades come from naive rounding instead of the Nelder-Mead thresholds `[0.565, 1.441, 2.375, 3.042]`. **Every grade is then wrong in the same direction, and nothing looks broken.** This is the dangerous one. |
+
+**If the model is down, the demo still works.** The demo cases carry precomputed
+grades and heatmaps in `server/demo-images/precomputed/`, so the site comes up
+fully populated. Only grading a *new* upload stops, and it fails honestly — the
+case is marked FAILED rather than inventing a grade.
+
+---
+
+## 4 · Checking everything, from either Linux box
+
+```bash
+bash tools/status.sh
+```
+
+Works on `prts-0` and on `spark-063e`, and on `prts` in Git Bash. It reports the
+tmux sessions, what is bound to `:8000` and `:3000`, the model's `/health`, the
+API's `/api/health` and **which build it is**, the other machine across Tailscale,
+and the public tunnel. It exits non-zero when something did not answer, so from a
+notebook cell you get a red mark:
+
+```python
+!bash ~/RetinaX.ai/tools/status.sh
+```
+
+It changes nothing and needs no root. Override ports if you have to:
+
+```bash
+MODEL_PORT=8000 API_PORT=3000 PEER=spark-063e bash tools/status.sh
+```
+
+---
 
 ## 5 · The end-to-end check, before you call it done
 
@@ -223,20 +288,44 @@ In a private window, on a phone if you can:
 5. disagree with a grade and try to save with no reason — it must refuse (BR-3);
 6. save with a reason, then reload — the model's grade is **still there** next to
    your correction (BR-4). This is the thing the whole project is about; show it;
-7. with the tunnel up, upload a new image and watch it get graded;
-8. sign out, sign in as `ha@retinax.ai`, and confirm Quang's cases are not visible
-   (BR-1).
+7. with the model up, upload a new image and watch it get graded;
+8. sign out, sign in as `ha@retinax.ai`, and confirm Quang's cases are not
+   visible (BR-1) — the API returns **404, not 403**, because 403 would confirm
+   the case exists;
+9. sign out, then reload. You must stay signed out. (The sign-out bug was a
+   `clearCookie` without `Secure`: a browser refuses to let a non-Secure
+   `Set-Cookie` overwrite a Secure one, so the session silently survived.)
 
 Step 6 is the demo. Lead with it.
 
 ---
 
-## What is left open
+## Rollback
 
-**The database.** SQLite in a file, and Render's free disk is wiped on restart.
-Demo cases come back automatically; anything uploaded during a session does not.
-For a three-day build against a competition deadline this is the right trade —
-but if the database itself is being marked, moving to Supabase Postgres is about
-half a day (`server/db.js` and `server/server.js` from `better-sqlite3` to `pg`,
-and images to Supabase Storage). Say so plainly if a judge asks; a defended
-trade-off reads better than a hidden one.
+Keep the previous tar. Rolling back is unpacking it and restarting:
+
+```bash
+cd ~/RetinaX.ai
+tar xzf ~/retinax-server-<previous>.tar.gz
+bash server/run-on-host.sh stop && bash server/run-on-host.sh start
+bash tools/status.sh          # confirm the version went back
+```
+
+The data is untouched by either direction, because the tar never contains it.
+
+Schema changes are the exception: `server/db.js` migrates forward with
+`ensureColumn` on boot and has no down-migration. Rolling back code across a
+schema change leaves the extra column in place — harmless, but know that it
+happened.
+
+---
+
+## What is still open
+
+**The database is a single SQLite file on one host.** There is no replica and no
+automated backup. For a competition build that is a defensible trade, but say it
+plainly if a judge asks; a defended trade-off reads better than a hidden one. The
+cheap improvement is a nightly copy of `$VAR_DIR` to somewhere else on `prts-0`.
+
+**The tunnel hostname is a single point of failure.** If ngrok is down, the site
+cannot reach the API even though the API is fine.
