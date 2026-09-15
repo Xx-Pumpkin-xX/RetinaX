@@ -42,15 +42,24 @@ import numpy as np
 FOV_HEAT_MIN = 0.60
 
 # Pixels above this quantile OF THE ACTIVATION INSIDE THE RETINA become
-# candidate regions. 0.98 keeps the top 2%.
-REGION_QUANTILE = 0.98
+# candidate regions. 0.95 keeps the top 5%.
+#
+# Widened from 0.98. At the top 2% only the single strongest focus survived on
+# most images, so one area got marked on a retina the model had reacted to in
+# several places. That mark is not wrong, but it is badly incomplete, and a
+# clinician reading it as "this is what it found" is reading it wrong. Going
+# much below 0.95 is not free: the regions merge into one blob covering half
+# the retina, which says nothing.
+REGION_QUANTILE = 0.95
 # A region smaller than this fraction of the retina is noise, not a finding.
-REGION_MIN_AREA_FRAC = 0.0008
+# Lowered fourfold alongside the quantile: microaneurysms are small, and a
+# filter tuned to drop noise was dropping them too.
+REGION_MIN_AREA_FRAC = 0.0002
 # Boxes are grown by this fraction of their size, because the CAM is coarse
 # (a 600px input downsampled to the last conv layer) and a tight box implies a
 # precision the map does not have.
 REGION_PAD_FRAC = 0.25
-MAX_REGIONS = 5
+MAX_REGIONS = 8
 
 
 def fov_mask(rgb, tol=7):
@@ -184,4 +193,8 @@ def cam_regions(cam, size, box=None, rgb=None,
             "w": round(bw, 1), "h": round(bh, 1),
             "score": round(r["peak"], 4),
         })
+    # Numbered by strength, so a clinician can talk about "box 2" and the
+    # stored row means the same thing later.
+    for rank, region in enumerate(out, 1):
+        region["rank"] = rank
     return out
