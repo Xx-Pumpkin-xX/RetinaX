@@ -54,3 +54,6 @@ server/BUILD
 retinax-server-*.tar.gz
 ai/BUILD
 retinax-ai-*.tar.gz
+
+_archive/
+*.zip
