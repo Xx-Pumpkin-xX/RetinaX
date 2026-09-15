@@ -51,6 +51,25 @@ FOV_HEAT_MIN = 0.60
 # much below 0.95 is not free: the regions merge into one blob covering half
 # the retina, which says nothing.
 REGION_QUANTILE = 0.95
+# What counts as "red" on the jet colormap the overlay is painted with.
+# jet runs blue -> cyan -> green -> yellow -> red, and everything from about
+# 0.80 up renders orange-red.
+#
+# This is an ABSOLUTE level on the map, not a quantile, and that is the point:
+# the outline then traces exactly the red area a clinician can see in the CAM
+# view. The two views become the same statement shown twice, rather than two
+# thresholds that happen to disagree. The quantile above survives only as a
+# fallback for a map with no red in it at all.
+RED_LEVEL = 0.80
+# The traced boundary is grown by this many pixels of the map's own grid, for
+# the same reason the boxes were padded: the CAM is coarse - a 600px input
+# downsampled to the last conv layer - and a boundary drawn tight to the
+# threshold implies a precision it does not have. Dilating the mask rather than
+# scaling the polygon keeps the shape instead of distorting long thin regions.
+REGION_GROW_PX = 2
+# Contour points are reduced to this fraction of the region's perimeter, which
+# takes the pixel staircase off the outline without rounding away its shape.
+REGION_SIMPLIFY_FRAC = 0.004
 # A region smaller than this fraction of the retina is noise, not a finding.
 # Lowered fourfold alongside the quantile: microaneurysms are small, and a
 # filter tuned to drop noise was dropping them too.
@@ -120,7 +139,7 @@ def suppress_reason(cam, grade, rgb=None, fov_heat_min=FOV_HEAT_MIN):
 def cam_regions(cam, size, box=None, rgb=None,
                 quantile=REGION_QUANTILE, min_area_frac=REGION_MIN_AREA_FRAC,
                 pad_frac=REGION_PAD_FRAC, max_regions=MAX_REGIONS):
-    """Reduce an activation map to a few padded boxes around its hottest areas.
+    """Reduce an activation map to outlines around its red areas.
 
     `size` is (width, height) of the ORIGINAL photograph and `box` the crop
     offset (y0, y1, x0, x1) from dr_adapter.gray_crop_box, so the returned
@@ -145,10 +164,22 @@ def cam_regions(cam, size, box=None, rgb=None,
     if values.size == 0:
         return []
 
-    thr = float(np.quantile(values, quantile))
-    binary = ((cam >= thr) & inside).astype(np.uint8)
+    # Red first. If the map has no red inside the retina - which happens on a
+    # flat response - fall back to the quantile so the caller still gets the
+    # strongest areas rather than nothing.
+    binary = ((cam >= RED_LEVEL) & inside).astype(np.uint8)
+    if binary.sum() == 0:
+        thr = float(np.quantile(values, quantile))
+        binary = ((cam >= thr) & inside).astype(np.uint8)
     if binary.sum() == 0:
         return []
+    if REGION_GROW_PX > 0:
+        # An ELLIPSE kernel, not a square one: a square structuring element
+        # squares off round blobs, and the outline then looks like the box we
+        # just stopped drawing.
+        k = 2 * REGION_GROW_PX + 1
+        binary = cv2.dilate(binary, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+        binary = (binary & inside.astype(np.uint8))
 
     n, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
     min_area = max(1.0, min_area_frac * float(inside.sum()))
@@ -161,7 +192,21 @@ def cam_regions(cam, size, box=None, rgb=None,
         x, y = int(stats[i, cv2.CC_STAT_LEFT]), int(stats[i, cv2.CC_STAT_TOP])
         bw, bh = int(stats[i, cv2.CC_STAT_WIDTH]), int(stats[i, cv2.CC_STAT_HEIGHT])
         peak = float(cam[labels == i].max())
-        found.append({"x": x, "y": y, "w": bw, "h": bh, "peak": peak, "area": area})
+
+        # The region's own boundary, traced. Deliberately NOT a convex hull:
+        # a hull bridges across the gap between two lobes of the same region
+        # and encloses retina the map never responded to.
+        comp = (labels == i).astype(np.uint8)
+        cnts, _ = cv2.findContours(comp, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not cnts:
+            continue
+        c = max(cnts, key=cv2.contourArea)
+        eps = REGION_SIMPLIFY_FRAC * cv2.arcLength(c, True)
+        poly = cv2.approxPolyDP(c, eps, True).reshape(-1, 2).astype(np.float32)
+        if len(poly) < 3:
+            continue
+        found.append({"x": x, "y": y, "w": bw, "h": bh, "peak": peak,
+                      "area": area, "poly": poly})
 
     if not found:
         return []
@@ -188,10 +233,18 @@ def cam_regions(cam, size, box=None, rgb=None,
         # Clamp to the photograph.
         x, y = max(0.0, x), max(0.0, y)
         bw, bh = min(bw, W - x), min(bh, H - y)
+        # The outline, mapped through the same crop transform as the box. It
+        # is already grown by the dilation above, so it is not scaled again -
+        # scaling a polygon from its centroid stretches long thin shapes.
+        poly = r["poly"].copy()
+        poly[:, 0] = np.clip(poly[:, 0] * sx + ox, 0, W)
+        poly[:, 1] = np.clip(poly[:, 1] * sy + oy, 0, H)
+
         out.append({
             "x": round(x, 1), "y": round(y, 1),
             "w": round(bw, 1), "h": round(bh, 1),
             "score": round(r["peak"], 4),
+            "polygon": [[round(float(a), 1), round(float(b), 1)] for a, b in poly],
         })
     # Numbered by strength, so a clinician can talk about "box 2" and the
     # stored row means the same thing later.
