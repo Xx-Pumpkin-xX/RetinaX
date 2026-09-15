@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { api, GRADES, gradeVar } from "../api.js";
 import ApiImage from "../ApiImage.jsx";
+import RegionOverlay from "../RegionOverlay.jsx";
 
 // "Default" is always available — it is the photograph with nothing on top.
 // CAM and CCEM appear only when the service actually returned that map, so the
@@ -14,6 +15,14 @@ const METHODS = [
   { key: "cam", label: "CAM" },
   { key: "ccem", label: "CCEM" },
 ];
+
+// Why the service drew no map. Said out loud, because an overlay control that
+// silently offers nothing reads as a broken service, and this is a finding.
+const SUPPRESSED = {
+  grade_0: "No retinopathy was found, so there is nothing for an explanation to point at. A map drawn here would mark noise.",
+  outside_fov: "Most of the model's attention fell outside the retina — on the crop edge or the black border — so the map describes the photograph, not the eye. It has not been shown.",
+  no_map: "The service returned no explanation map for this image.",
+};
 
 export default function CaseDetail() {
   const { id } = useParams();
@@ -52,7 +61,12 @@ export default function CaseDetail() {
           // Open on the richest explanation this case actually has, rather than
           // on a method that would fall back to a different picture.
           const has = row.overlays || [];
-          setOverlay(has.includes("ccem") ? "ccem" : has.includes("cam") ? "cam" : "Default");
+          setOverlay(
+            row.regions?.length ? "regions"
+              : has.includes("ccem") ? "ccem"
+              : has.includes("cam") ? "cam"
+              : "Default"
+          );
           // A case can be mid-grading when the page opens, or be re-graded from
           // another tab. Without this the doctor sits on a stale "Grading…"
           // until they think to refresh.
@@ -138,6 +152,8 @@ export default function CaseDetail() {
   if (!c) return <div className="page muted">Loading…</div>;
 
   const available = c.overlays || [];
+  const regions = c.regions || [];
+  const suppressed = c.suppressionReason ? SUPPRESSED[c.suppressionReason] : null;
   const reviewed = c.status === "REVIEWED";
   const graded = c.status === "GRADED";
   const processing = c.status === "PROCESSING";
@@ -169,7 +185,10 @@ export default function CaseDetail() {
         <div className="card stack" style={{ overflow: "hidden" }}>
           <div className="viewer" style={{ height: 560 }}>
             <ApiImage path={`/api/cases/${c.id}/image`} alt="Fundus photograph" />
-            {overlay !== "Default" && (
+            {overlay === "regions" && (
+              <RegionOverlay regions={regions} size={c.imageSize} />
+            )}
+            {overlay !== "Default" && overlay !== "regions" && (
               <ApiImage className="overlay" path={`/api/cases/${c.id}/heatmap/${overlay}`}
                         alt={`${overlay.toUpperCase()} explanation overlay`} style={{ opacity }} />
             )}
@@ -179,6 +198,13 @@ export default function CaseDetail() {
             <div className="seg">
               <button type="button" aria-pressed={overlay === "Default"}
                       onClick={() => setOverlay("Default")}>Default</button>
+              {regions.length > 0 && (
+                <button type="button" aria-pressed={overlay === "regions"}
+                        onClick={() => setOverlay("regions")}
+                        title="The strongest areas of the model's attention, outlined over the photograph">
+                  Regions
+                </button>
+              )}
               {METHODS.filter((m) => available.includes(m.key)).map((m) => (
                 <button key={m.key} type="button" aria-pressed={overlay === m.key}
                         onClick={() => setOverlay(m.key)}>{m.label}</button>
@@ -186,14 +212,23 @@ export default function CaseDetail() {
             </div>
             <input className="grow" type="range" min="0" max="1" step="0.01" value={opacity}
                    onChange={(e) => setOpacity(Number(e.target.value))}
-                   disabled={overlay === "Default"} aria-label="Overlay opacity" />
+                   disabled={overlay === "Default" || overlay === "regions"}
+                   aria-label="Overlay opacity" />
             <span className="mono muted" style={{ fontSize: 12.5, width: 40 }}>
               {Math.round(opacity * 100)}%
             </span>
           </div>
           {available.length === 0 && (
             <div className="muted" style={{ fontSize: 12.5, padding: "0 16px 12px" }}>
-              No explanation map was returned for this image.
+              {suppressed || "No explanation map was returned for this image."}
+            </div>
+          )}
+          {overlay === "regions" && (
+            <div className="muted" style={{ fontSize: 12.5, padding: "0 16px 12px", lineHeight: 1.5 }}>
+              {regions.length} area{regions.length > 1 ? "s" : ""} where the model's evidence for
+              grade {c.grade} was strongest, numbered by strength. These are{" "}
+              <strong>attention regions, not detected lesions</strong> — the outline shows where
+              the grading model looked, and is deliberately wider than any lesion inside it.
             </div>
           )}
           {c.grade != null && (

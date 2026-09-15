@@ -1,0 +1,83 @@
+warning: in the working copy of 'server/ai.js', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/ai/run-on-dgx.sh b/ai/run-on-dgx.sh[m
+[1mindex 49114b7..b4bf44e 100644[m
+[1m--- a/ai/run-on-dgx.sh[m
+[1m+++ b/ai/run-on-dgx.sh[m
+[36m@@ -123,8 +123,12 @@[m [mcase "${1:-start}" in[m
+     [ -f "$MODEL_PATH" ]     || { echo "!! MODEL_PATH does not exist: $MODEL_PATH" >&2; exit 1; }[m
+     [ -f "$THRESHOLD_PATH" ] || { echo "!! THRESHOLD_PATH does not exist: $THRESHOLD_PATH" >&2; exit 1; }[m
+ [m
+[31m-    SRV="$(cd "$HERE/../server" && pwd)"[m
+     if [ "${SERVE_API:-0}" = "1" ]; then[m
+[32m+[m[32m      # Resolved INSIDE the guard. A model-only host has no sibling server/[m
+[32m+[m[32m      # directory, so doing this unconditionally kills the service on exactly[m
+[32m+[m[32m      # the machine that only ever needed to serve the model.[m
+[32m+[m[32m      SRV="$(cd "$HERE/../server" 2>/dev/null && pwd)" \[m
+[32m+[m[32m        || { echo "!! SERVE_API=1 but ../server is not next to this script" >&2; exit 1; }[m
+       for v in VAR_DIR WEB_ORIGIN JWT_SECRET; do[m
+         [ -n "${!v:-}" ] || { echo "!! SERVE_API=1 but $v is not set in dgx.env" >&2; exit 1; }[m
+       done[m
+[1mdiff --git a/server/ai.js b/server/ai.js[m
+[1mindex 0fe8221..6c97dfe 100644[m
+[1m--- a/server/ai.js[m
+[1m+++ b/server/ai.js[m
+[36m@@ -19,7 +19,10 @@[m [mexport const aiUrl = () => AI_URL;[m
+  * Contract:  POST {AI_URL}/infer   multipart field "file"[m
+  *            -> { grade: 0..4,[m
+  *                 heatmap_cam_png_base64:  string | null,   // Grad-CAM++[m
+[31m- *                 heatmap_ccem_png_base64: string | null }  // CCEM fusion[m
+[32m+[m[32m *                 heatmap_ccem_png_base64: string | null,   // CCEM fusion[m
+[32m+[m[32m *                 regions: [{x,y,w,h,polygon,score,rank}],  // attention regions[m
+[32m+[m[32m *                 image_size: [w, h],                       // their frame[m
+[32m+[m[32m *                 suppression_reason: string | null }       // why no map[m
+  *[m
+  * Two maps because the case screen offers two methods. CCEM is far more[m
+  * expensive than Grad-CAM++, so it can come back null on a live upload; the[m
+[36m@@ -49,10 +52,20 @@[m [mexport async function gradeImage(imageAbsPath, { ccem = false } = {}) {[m
+     return p;[m
+   };[m
+ [m
+[32m+[m[32m  // Regions are coordinates, not a picture, so they are passed through as data[m
+[32m+[m[32m  // and drawn by the browser. That is the whole point of them: a rendered[m
+[32m+[m[32m  // overlay is fixed at the moment it is made, while an outline can be turned[m
+[32m+[m[32m  // off, zoomed, and laid over the photograph without hiding it.[m
+[32m+[m[32m  const size = Array.isArray(out.image_size) ? out.image_size : [];[m
+[32m+[m
+   return {[m
+     grade: out.grade,[m
+     camPath: await save(out.heatmap_cam_png_base64),[m
+     ccemPath: await save(out.heatmap_ccem_png_base64),[m
+[32m+[m[32m    regions: Array.isArray(out.regions) ? out.regions : [],[m
+[32m+[m[32m    imageWidth: Number(size[0]) || null,[m
+[32m+[m[32m    imageHeight: Number(size[1]) || null,[m
+[32m+[m[32m    suppressionReason: out.suppression_reason ?? null,[m
+   };[m
+ }[m
+ [m
+[36m@@ -70,9 +83,16 @@[m [mexport async function gradeImage(imageAbsPath, { ccem = false } = {}) {[m
+  * The returned grade is checked against the stored one and otherwise ignored.[m
+  */[m
+ export async function explain(imageAbsPath, expectedGrade, { ccem = true } = {}) {[m
+[31m-  const { grade, camPath, ccemPath } = await gradeImage(imageAbsPath, { ccem });[m
+[31m-  if (ccem && !ccemPath) throw new Error("The service returned no CCEM map");[m
+[31m-  if (!camPath && !ccemPath) throw new Error("The service returned no explanation map");[m
+[32m+[m[32m  const { grade, camPath, ccemPath, regions, imageWidth, imageHeight, suppressionReason } =[m
+[32m+[m[32m    await gradeImage(imageAbsPath, { ccem });[m
+[32m+[m[32m  // A suppressed map is an answer, not a failure: the service looked and found[m
+[32m+[m[32m  // nothing worth pointing at. Treating it as an error would make a grade-0 eye[m
+[32m+[m[32m  // look like a broken service, which is exactly the misreading suppression[m
+[32m+[m[32m  // exists to prevent.[m
+[32m+[m[32m  if (!suppressionReason) {[m
+[32m+[m[32m    if (ccem && !ccemPath) throw new Error("The service returned no CCEM map");[m
+[32m+[m[32m    if (!camPath && !ccemPath) throw new Error("The service returned no explanation map");[m
+[32m+[m[32m  }[m
+   if (expectedGrade != null && grade !== expectedGrade) {[m
+     // Same weights and deterministic preprocessing, so this should be[m
+     // impossible. If it ever happens, something changed underneath and the[m
+[36m@@ -83,5 +103,5 @@[m [mexport async function explain(imageAbsPath, expectedGrade, { ccem = true } = {})[m
+   // heatmap is a rendered picture: change how the service draws them and the[m
+   // old files do not repaint themselves, which is why redrawing has to be[m
+   // something a doctor can ask for.[m
+[31m-  return { camPath, ccemPath };[m
+[32m+[m[32m  return { camPath, ccemPath, regions, imageWidth, imageHeight, suppressionReason };[m
+ }[m

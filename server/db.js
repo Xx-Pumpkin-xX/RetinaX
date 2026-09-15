@@ -122,6 +122,21 @@ function ensureColumn(table, column, declaration) {
 // which is most of them.
 ensureColumn("cases", "UpdatedAt", "TEXT");
 
+// The attention regions the service marked on this image, as JSON, in the
+// photograph's own pixel coordinates - plus the frame they are measured in,
+// because a box without its frame is not a location.
+//
+// Stored rather than recomputed because they belong to the grade that was
+// shown: re-running the model to redraw them would risk marking a different
+// part of the retina than the doctor saw when they agreed or disagreed.
+ensureColumn("predictions", "Regions", "TEXT");
+ensureColumn("predictions", "ImageWidth", "INTEGER");
+ensureColumn("predictions", "ImageHeight", "INTEGER");
+// Why no map was drawn - "grade_0" or "outside_fov". Null when one was.
+// The screen has to say which, because a missing overlay with no explanation
+// reads as a failure, and this is a finding.
+ensureColumn("predictions", "SuppressionReason", "TEXT");
+
 export const GRADE_LABELS = [
   "No DR",
   "Mild NPDR",

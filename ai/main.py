@@ -344,6 +344,10 @@ async def infer(
         # coordinates. Attention regions, not detected lesions: this CAM comes
         # from a grading model, not a lesion detector.
         "regions": cam_regions(cam, img.size, box, base) if show_cam else [],
+        # The frame those coordinates are in. Without it the browser cannot
+        # place a box: it knows how big the photograph is on screen, not how
+        # big it is in pixels, and the two are never the same number.
+        "image_size": [int(img.size[0]), int(img.size[1])],
         "heatmap_suppressed": not show_cam,
         "suppression_reason": reason,
         "fov_heat_fraction": round(float(fov_frac), 3),

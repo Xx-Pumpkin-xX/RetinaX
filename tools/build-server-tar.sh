@@ -67,6 +67,13 @@ PACKED_BY=tar
 STAMP
 
 # ------------------------------------------------------------------- pack ----
+# CRLF in a shell script is not cosmetic. bash reads the carriage return as
+# part of the last word on the line, so `set -o pipefail` becomes `pipefail\r`
+# and the script dies at line 4 with a message naming neither the file nor the
+# cause. A Windows checkout produces it silently, so the pack step is where it
+# gets caught - once, for every host that will ever receive this tar.
+find server tools -name '*.sh' -print0 | xargs -0 -r sed -i 's/\r$//'
+
 TAR="retinax-server-$VERSION.tar.gz"
 EXCLUDES=(
   --exclude=server/node_modules

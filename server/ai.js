@@ -19,7 +19,10 @@ export const aiUrl = () => AI_URL;
  * Contract:  POST {AI_URL}/infer   multipart field "file"
  *            -> { grade: 0..4,
  *                 heatmap_cam_png_base64:  string | null,   // Grad-CAM++
- *                 heatmap_ccem_png_base64: string | null }  // CCEM fusion
+ *                 heatmap_ccem_png_base64: string | null,   // CCEM fusion
+ *                 regions: [{x,y,w,h,polygon,score,rank}],  // attention regions
+ *                 image_size: [w, h],                       // their frame
+ *                 suppression_reason: string | null }       // why no map
  *
  * Two maps because the case screen offers two methods. CCEM is far more
  * expensive than Grad-CAM++, so it can come back null on a live upload; the
@@ -49,10 +52,20 @@ export async function gradeImage(imageAbsPath, { ccem = false } = {}) {
     return p;
   };
 
+  // Regions are coordinates, not a picture, so they are passed through as data
+  // and drawn by the browser. That is the whole point of them: a rendered
+  // overlay is fixed at the moment it is made, while an outline can be turned
+  // off, zoomed, and laid over the photograph without hiding it.
+  const size = Array.isArray(out.image_size) ? out.image_size : [];
+
   return {
     grade: out.grade,
     camPath: await save(out.heatmap_cam_png_base64),
     ccemPath: await save(out.heatmap_ccem_png_base64),
+    regions: Array.isArray(out.regions) ? out.regions : [],
+    imageWidth: Number(size[0]) || null,
+    imageHeight: Number(size[1]) || null,
+    suppressionReason: out.suppression_reason ?? null,
   };
 }
 
@@ -70,9 +83,16 @@ export async function gradeImage(imageAbsPath, { ccem = false } = {}) {
  * The returned grade is checked against the stored one and otherwise ignored.
  */
 export async function explain(imageAbsPath, expectedGrade, { ccem = true } = {}) {
-  const { grade, camPath, ccemPath } = await gradeImage(imageAbsPath, { ccem });
-  if (ccem && !ccemPath) throw new Error("The service returned no CCEM map");
-  if (!camPath && !ccemPath) throw new Error("The service returned no explanation map");
+  const { grade, camPath, ccemPath, regions, imageWidth, imageHeight, suppressionReason } =
+    await gradeImage(imageAbsPath, { ccem });
+  // A suppressed map is an answer, not a failure: the service looked and found
+  // nothing worth pointing at. Treating it as an error would make a grade-0 eye
+  // look like a broken service, which is exactly the misreading suppression
+  // exists to prevent.
+  if (!suppressionReason) {
+    if (ccem && !ccemPath) throw new Error("The service returned no CCEM map");
+    if (!camPath && !ccemPath) throw new Error("The service returned no explanation map");
+  }
   if (expectedGrade != null && grade !== expectedGrade) {
     // Same weights and deterministic preprocessing, so this should be
     // impossible. If it ever happens, something changed underneath and the
@@ -83,5 +103,5 @@ export async function explain(imageAbsPath, expectedGrade, { ccem = true } = {})
   // heatmap is a rendered picture: change how the service draws them and the
   // old files do not repaint themselves, which is why redrawing has to be
   // something a doctor can ask for.
-  return { camPath, ccemPath };
+  return { camPath, ccemPath, regions, imageWidth, imageHeight, suppressionReason };
 }

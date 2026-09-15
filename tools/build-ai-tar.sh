@@ -52,6 +52,13 @@ BUILT_AT=$BUILT_AT
 PACKED_BY=tar
 STAMP
 
+# CRLF in a shell script is not cosmetic. bash reads the carriage return as
+# part of the last word on the line, so `set -o pipefail` becomes `pipefail\r`
+# and the script dies at line 4 with a message naming neither the file nor the
+# cause. A Windows checkout produces it silently, so the pack step is where it
+# gets caught - once, for every host that will ever receive this tar.
+find ai -name '*.sh' -print0 | xargs -0 -r sed -i 's/\r$//'
+
 TAR="retinax-ai-$VERSION.tar.gz"
 tar czf "$TAR" \
   --exclude=ai/dgx.env \

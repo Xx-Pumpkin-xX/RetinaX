@@ -292,7 +292,12 @@ app.get("/api/me", auth, (req, res) => {
 
 /* --------------------------------------------------------------- cases --- */
 
-const caseRow = (row) => ({
+/**
+ * `full` adds the attention regions, which are polygons and can run to a few
+ * kilobytes per case. The worklist shows fifty rows and draws none of them, so
+ * it asks for the lean shape; only the case screen pays for the coordinates.
+ */
+const caseRow = (row, full = false) => ({
   id: row.CaseID,
   patientCode: row.PatientCode,
   birthYear: row.BirthYear,
@@ -309,7 +314,27 @@ const caseRow = (row) => ({
   gradeLabel: row.Grade == null ? null : GRADE_LABELS[row.Grade],
   // The screen only offers a method it actually has a map for.
   overlays: [row.HeatmapCamPath && "cam", row.HeatmapCcemPath && "ccem"].filter(Boolean),
+  ...(full ? {
+    // Marked areas in the photograph's own pixels, with the frame they are
+    // measured in. Parsed here so a corrupt row degrades to "no regions"
+    // rather than breaking the whole case screen.
+    regions: parseRegions(row.Regions),
+    imageSize: row.ImageWidth && row.ImageHeight
+      ? { width: row.ImageWidth, height: row.ImageHeight }
+      : null,
+    suppressionReason: row.SuppressionReason ?? null,
+  } : {}),
 });
+
+function parseRegions(json) {
+  if (!json) return [];
+  try {
+    const out = JSON.parse(json);
+    return Array.isArray(out) ? out : [];
+  } catch {
+    return [];
+  }
+}
 
 /**
  * Every assessment saved for a case, oldest first.
@@ -367,7 +392,7 @@ app.get("/api/cases", auth, (req, res) => {
        WHERE c.DoctorID = ? ORDER BY c.CreatedAt DESC`
     )
     .all(req.doctorId);
-  res.json(rows.map(caseRow));
+  res.json(rows.map((r) => caseRow(r)));
 });
 
 // BR-1: a doctor only ever sees their own cases. 404, not 403 —
@@ -385,7 +410,7 @@ function ownCase(id, doctorId) {
 app.get("/api/cases/:id", auth, (req, res) => {
   const row = ownCase(req.params.id, req.doctorId);
   if (!row) return res.status(404).json({ error: "Case not found" });
-  res.json({ ...caseRow(row), reviews: reviewHistory(row.CaseID) });
+  res.json({ ...caseRow(row, true), reviews: reviewHistory(row.CaseID) });
 });
 
 /** Delete a file we are done with, without letting that break the request. */
@@ -447,11 +472,14 @@ app.post("/api/cases", auth, upload.single("image"), async (req, res) => {
         patientSex || null, eyePosition, req.file.path, now);
 
   try {
-    const { grade, camPath, ccemPath } = await gradeImage(path.resolve(req.file.path));
+    const { grade, camPath, ccemPath, regions, imageWidth, imageHeight, suppressionReason } =
+      await gradeImage(path.resolve(req.file.path));
     db.prepare(
-      `INSERT INTO predictions (PredictionID, CaseID, Grade, HeatmapCamPath, HeatmapCcemPath, CreatedAt)
-       VALUES (?,?,?,?,?,?)`
-    ).run(randomUUID(), id, grade, camPath, ccemPath, new Date().toISOString());
+      `INSERT INTO predictions (PredictionID, CaseID, Grade, HeatmapCamPath, HeatmapCcemPath,
+                                Regions, ImageWidth, ImageHeight, SuppressionReason, CreatedAt)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`
+    ).run(randomUUID(), id, grade, camPath, ccemPath, JSON.stringify(regions),
+          imageWidth, imageHeight, suppressionReason, new Date().toISOString());
     db.prepare("UPDATE cases SET Status = 'GRADED' WHERE CaseID = ?").run(id);
     await dropSupersededFailures(req.doctorId, patientCode.trim(), eyePosition, id);
   } catch (err) {
@@ -460,7 +488,7 @@ app.post("/api/cases", auth, upload.single("image"), async (req, res) => {
     return res.status(502).json({ id, error: "The grading service did not answer" });
   }
 
-  res.status(201).json(caseRow(ownCase(id, req.doctorId)));
+  res.status(201).json(caseRow(ownCase(id, req.doctorId), true));
 });
 
 /**
@@ -483,11 +511,14 @@ app.post("/api/cases/:id/regrade", auth, async (req, res) => {
 
   db.prepare("UPDATE cases SET Status = 'PROCESSING' WHERE CaseID = ?").run(req.params.id);
   try {
-    const { grade, camPath, ccemPath } = await gradeImage(path.resolve(row.ImagePath));
+    const { grade, camPath, ccemPath, regions, imageWidth, imageHeight, suppressionReason } =
+      await gradeImage(path.resolve(row.ImagePath));
     db.prepare(
-      `INSERT INTO predictions (PredictionID, CaseID, Grade, HeatmapCamPath, HeatmapCcemPath, CreatedAt)
-       VALUES (?,?,?,?,?,?)`
-    ).run(randomUUID(), req.params.id, grade, camPath, ccemPath, new Date().toISOString());
+      `INSERT INTO predictions (PredictionID, CaseID, Grade, HeatmapCamPath, HeatmapCcemPath,
+                                Regions, ImageWidth, ImageHeight, SuppressionReason, CreatedAt)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`
+    ).run(randomUUID(), req.params.id, grade, camPath, ccemPath, JSON.stringify(regions),
+          imageWidth, imageHeight, suppressionReason, new Date().toISOString());
     db.prepare("UPDATE cases SET Status = 'GRADED' WHERE CaseID = ?").run(req.params.id);
     await dropSupersededFailures(req.doctorId, row.PatientCode, row.EyePosition, req.params.id);
   } catch (err) {
@@ -497,7 +528,7 @@ app.post("/api/cases/:id/regrade", auth, async (req, res) => {
   }
 
   const updated = ownCase(req.params.id, req.doctorId);
-  res.json({ ...caseRow(updated), reviews: reviewHistory(req.params.id) });
+  res.json({ ...caseRow(updated, true), reviews: reviewHistory(req.params.id) });
 });
 
 /**
@@ -522,16 +553,24 @@ app.post("/api/cases/:id/explain", auth, async (req, res) => {
   const wantCcem = req.query.ccem !== "0";
 
   try {
-    const { camPath, ccemPath } =
+    const { camPath, ccemPath, regions, imageWidth, imageHeight, suppressionReason } =
       await explain(path.resolve(row.ImagePath), row.Grade, { ccem: wantCcem });
     // COALESCE on both, so a Grad-CAM++-only redraw keeps an existing CCEM map
     // rather than deleting it. The grade is not touched — BR-4 — only pictures.
     db.prepare(
       `UPDATE predictions
           SET HeatmapCamPath  = COALESCE(?, HeatmapCamPath),
-              HeatmapCcemPath = COALESCE(?, HeatmapCcemPath)
+              HeatmapCcemPath = COALESCE(?, HeatmapCcemPath),
+              Regions           = ?,
+              ImageWidth        = ?,
+              ImageHeight       = ?,
+              SuppressionReason = ?
         WHERE CaseID = ?`
-    ).run(camPath, ccemPath, req.params.id);
+    // Regions are overwritten rather than COALESCEd: they were just recomputed
+    // from this image, and keeping the previous set would leave the screen
+    // marking areas the current map no longer supports.
+    ).run(camPath, ccemPath, JSON.stringify(regions), imageWidth, imageHeight,
+          suppressionReason, req.params.id);
 
     // Only once the row points at the new files: a crash between writing them
     // and committing the row would otherwise leave the case pointing at a map
@@ -544,7 +583,7 @@ app.post("/api/cases/:id/explain", auth, async (req, res) => {
   }
 
   const updated = ownCase(req.params.id, req.doctorId);
-  res.json({ ...caseRow(updated), reviews: reviewHistory(req.params.id) });
+  res.json({ ...caseRow(updated, true), reviews: reviewHistory(req.params.id) });
 });
 
 /**
@@ -600,7 +639,7 @@ app.post("/api/cases/:id/details", auth, (req, res) => {
   if ((row.BirthYear ?? null) !== birthYear) changed.push(`born ${row.BirthYear ?? "—"} -> ${birthYear ?? "—"}`);
   if ((row.PatientSex ?? null) !== patientSex) changed.push(`sex ${row.PatientSex ?? "—"} -> ${patientSex ?? "—"}`);
   if (!changed.length) {
-    return res.json({ ...caseRow(row), reviews: reviewHistory(row.CaseID) });
+    return res.json({ ...caseRow(row, true), reviews: reviewHistory(row.CaseID) });
   }
 
   db.prepare(
@@ -613,7 +652,7 @@ app.post("/api/cases/:id/details", auth, (req, res) => {
   console.log(`[details] ${req.params.id.slice(0, 8)} by ${req.doctorId.slice(0, 8)}: ${changed.join(", ")}`);
 
   const updated = ownCase(req.params.id, req.doctorId);
-  res.json({ ...caseRow(updated), reviews: reviewHistory(req.params.id) });
+  res.json({ ...caseRow(updated, true), reviews: reviewHistory(req.params.id) });
 });
 
 /**
@@ -702,7 +741,7 @@ app.post("/api/cases/:id/mark", auth, (req, res) => {
             Status = 'REVIEWED', ReviewedAt = ? WHERE CaseID = ?`
   ).run(agreement, grade, why, now, req.params.id);
 
-  res.json({ ...caseRow(ownCase(req.params.id, req.doctorId)),
+  res.json({ ...caseRow(ownCase(req.params.id, req.doctorId), true),
              reviews: reviewHistory(req.params.id) });
 });
 

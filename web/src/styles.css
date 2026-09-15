@@ -193,6 +193,15 @@ textarea.input { height: auto; min-height: 78px; padding: 10px 13px; line-height
 }
 .viewer .overlay { position: absolute; inset: 0; pointer-events: none; }
 
+/* Attention regions: outlines, never fills. A filled shape reads as a
+   segmentation mask - a claim that every pixel inside it is lesion - and this
+   map comes from a grading model, which cannot support that. An outline says
+   "look here", which is what it actually knows. */
+.region-line   { fill: none; stroke: #ffd166; stroke-width: 2; }
+.region-shadow { fill: none; stroke: rgba(0,0,0,.65); stroke-width: 4.5; }
+.region-badge  { fill: #ffd166; }
+.region-rank   { fill: #10141a; font-weight: 700; font-family: inherit; }
+
 /* Native controls follow the theme accent instead of the browser blue. */
 input[type="range"],
 input[type="checkbox"],

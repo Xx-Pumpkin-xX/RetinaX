@@ -52,3 +52,5 @@ server/tunnel.log
 # would mean every checkout claims to be whatever was last packed.
 server/BUILD
 retinax-server-*.tar.gz
+ai/BUILD
+retinax-ai-*.tar.gz

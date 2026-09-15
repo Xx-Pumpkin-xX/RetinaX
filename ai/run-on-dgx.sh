@@ -123,8 +123,12 @@ case "${1:-start}" in
     [ -f "$MODEL_PATH" ]     || { echo "!! MODEL_PATH does not exist: $MODEL_PATH" >&2; exit 1; }
     [ -f "$THRESHOLD_PATH" ] || { echo "!! THRESHOLD_PATH does not exist: $THRESHOLD_PATH" >&2; exit 1; }
 
-    SRV="$(cd "$HERE/../server" && pwd)"
     if [ "${SERVE_API:-0}" = "1" ]; then
+      # Resolved INSIDE the guard. A model-only host has no sibling server/
+      # directory, so doing this unconditionally kills the service on exactly
+      # the machine that only ever needed to serve the model.
+      SRV="$(cd "$HERE/../server" 2>/dev/null && pwd)" \
+        || { echo "!! SERVE_API=1 but ../server is not next to this script" >&2; exit 1; }
       for v in VAR_DIR WEB_ORIGIN JWT_SECRET; do
         [ -n "${!v:-}" ] || { echo "!! SERVE_API=1 but $v is not set in dgx.env" >&2; exit 1; }
       done
