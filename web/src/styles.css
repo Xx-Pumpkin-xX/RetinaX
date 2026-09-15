@@ -10,8 +10,7 @@
      --notice      the standing disclaimer — deliberately neutral, so it never
                    competes with the accent or reads as a severity grade
 --------------------------------------------------------------------------- */
-:root,
-:root[data-theme="light"] {
+:root {
   --ground: #f7f4f1;
   --surface: #ffffff;
   --surface-2: #f1ece7;
@@ -40,37 +39,6 @@
   --g4: #ab3535;
 
   --shadow: 0 1px 2px rgba(27, 22, 19, 0.07);
-}
-
-:root[data-theme="dark"] {
-  --ground: #0e1417;
-  --surface: #151c20;
-  --surface-2: #1c252a;
-  --ink: #e8eef1;
-  --muted: #8c9aa3;
-  --line: #26323a;
-  --line-strong: #33424b;
-
-  --accent: #4fc3d9;
-  --accent-ink: #06222a;
-  --accent-soft: rgba(79, 195, 217, 0.12);
-
-  --danger: #ff8a7a;
-  --danger-soft: rgba(255, 138, 122, 0.10);
-  --danger-line: #4a2a26;
-
-  --notice-ink: #b9c6cd;
-  --notice-soft: rgba(255, 255, 255, 0.035);
-  --notice-line: #2f3d45;
-  --notice-mark: #e0703f;
-
-  --g0: #3fa87a;
-  --g1: #a9b84e;
-  --g2: #dd9a3d;
-  --g3: #e0703f;
-  --g4: #d64b4b;
-
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 * { box-sizing: border-box; }
