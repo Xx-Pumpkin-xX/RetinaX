@@ -36,6 +36,17 @@ export const api = {
   case: (id) => call(`/api/cases/${id}`),
   createCase: (formData) => call("/api/cases", { method: "POST", body: formData }),
   mark: (id, payload) => call(`/api/cases/${id}/mark`, json("POST", payload)),
+
+  // chatbot implementation 
+  chat: (id, message, history = []) =>
+  call(
+    `/api/cases/${id}/chat`,
+    json("POST", {
+      message,
+      history,
+    })
+  ),
+  
   updateDetails: (id, payload) => call(`/api/cases/${id}/details`, json("POST", payload)),
   deleteCase: (id) => call(`/api/cases/${id}`, { method: "DELETE" }),
   regrade: (id) => call(`/api/cases/${id}/regrade`, { method: "POST" }),
