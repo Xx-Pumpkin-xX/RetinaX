@@ -7,17 +7,6 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-    <script>
-      // Set the theme before first paint so there is no flash.
-      (function () {
-        // Dark is the default on a first visit, whatever the OS is set to:
-        // bright chrome around a dark fundus photograph wrecks contrast
-        // judgement, and that is the reading this tool exists for. A doctor
-        // who prefers light picks it once and the choice is remembered.
-        var saved = localStorage.getItem("rx-theme");
-        document.documentElement.dataset.theme = saved === "light" ? "light" : "dark";
-      })();
-    </script>
   </head>
   <body>
     <div id="root"></div>
