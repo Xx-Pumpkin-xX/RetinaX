@@ -8,7 +8,7 @@ import { openSync, readSync, closeSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { db, GRADE_LABELS } from "./db.js";
-import { gradeImage, explain, aiUrl } from "./ai.js";
+import { gradeImage, explain, aiUrl, chatCase } from "./ai.js";
 import { sendMail, isConfigured as mailConfigured } from "./mail.js";
 import { seedDemo } from "./seed-demo.js";
 import { seedDoctors } from "./seed.js";
@@ -703,51 +703,261 @@ app.delete("/api/cases/:id", auth, async (req, res) => {
 
 app.post("/api/cases/:id/mark", auth, (req, res) => {
   const row = ownCase(req.params.id, req.doctorId);
-  if (!row) return res.status(404).json({ error: "Case not found" });
-  // BR-2: reviewable only once the model has produced a grade. A REVIEWED case
-  // is still reviewable — a clinician can amend an assessment, and refusing
-  // that made a mis-click on a grade 4 eye permanent. What must not happen is
-  // the amendment erasing what came before, which is why every submission is
-  // appended to `reviews` below.
-  if (row.Status !== "GRADED" && row.Status !== "REVIEWED") {
-    return res.status(409).json({ error: "This case has no grade to review yet" });
+
+  if (!row) {
+    return res.status(404).json({
+      error: "Case not found",
+    });
   }
 
-  const { agreement, correctedGrade, reason } = req.body || {};
-  if (!["AGREE", "DISAGREE"].includes(agreement)) {
-    return res.status(400).json({ error: "agreement must be AGREE or DISAGREE" });
+  // A case can only be reviewed once the model has produced a grade.
+  // REVIEWED cases may also be amended; every submission is preserved
+  // in the reviews table.
+  if (
+    row.Status !== "GRADED" &&
+    row.Status !== "REVIEWED"
+  ) {
+    return res.status(409).json({
+      error: "This case has no grade to review yet",
+    });
   }
 
-  // BR-3: disagreeing without a corrected grade and a reason produces
-  // nothing you can retrain from, so the server refuses it.
+  const {
+    agreement,
+    correctedGrade,
+    reason,
+  } = req.body || {};
+
+  if (
+    !["AGREE", "DISAGREE"].includes(agreement)
+  ) {
+    return res.status(400).json({
+      error:
+        "agreement must be AGREE or DISAGREE",
+    });
+  }
+
   let grade = null;
-  let why = null;
+
+  // `Reason` is reused:
+  //
+  // AGREE    -> optional clinician note
+  // DISAGREE -> required disagreement reason
+  let why = String(reason || "").trim() || null;
+
   if (agreement === "DISAGREE") {
     grade = Number(correctedGrade);
-    why = (reason || "").trim();
-    if (!Number.isInteger(grade) || grade < 0 || grade > 4) {
-      return res.status(400).json({ error: "A corrected grade of 0-4 is required" });
+
+    if (
+      !Number.isInteger(grade) ||
+      grade < 0 ||
+      grade > 4
+    ) {
+      return res.status(400).json({
+        error:
+          "A corrected grade of 0-4 is required",
+      });
     }
-    if (!why) return res.status(400).json({ error: "A reason is required when you disagree" });
+
+    if (!why) {
+      return res.status(400).json({
+        error:
+          "A reason is required when you disagree",
+      });
+    }
   }
 
   const now = new Date().toISOString();
 
-  // The trail first, so a failure here cannot leave an amendment unrecorded.
+  // Preserve every clinician assessment in the review history.
   db.prepare(
-    `INSERT INTO reviews (ReviewID, CaseID, Agreement, CorrectedGrade, Reason, CreatedAt)
+    `INSERT INTO reviews
+       (ReviewID, CaseID, Agreement, CorrectedGrade, Reason, CreatedAt)
      VALUES (?,?,?,?,?,?)`
-  ).run(randomUUID(), req.params.id, agreement, grade, why, now);
+  ).run(
+    randomUUID(),
+    req.params.id,
+    agreement,
+    grade,
+    why,
+    now
+  );
 
-  // BR-4: predictions.Grade is never touched.
+  // Important: predictions.Grade is NEVER changed.
   db.prepare(
-    `UPDATE cases SET Agreement = ?, CorrectedGrade = ?, Reason = ?,
-            Status = 'REVIEWED', ReviewedAt = ? WHERE CaseID = ?`
-  ).run(agreement, grade, why, now, req.params.id);
+    `UPDATE cases
+        SET Agreement = ?,
+            CorrectedGrade = ?,
+            Reason = ?,
+            Status = 'REVIEWED',
+            ReviewedAt = ?
+      WHERE CaseID = ?`
+  ).run(
+    agreement,
+    grade,
+    why,
+    now,
+    req.params.id
+  );
 
-  res.json({ ...caseRow(ownCase(req.params.id, req.doctorId), true),
-             reviews: reviewHistory(req.params.id) });
+  res.json({
+    ...caseRow(
+      ownCase(
+        req.params.id,
+        req.doctorId
+      )
+    ),
+
+    reviews: reviewHistory(
+      req.params.id
+    ),
+  });
 });
+
+/* --------------------------------------------------------- contestable AI --- */
+
+app.post(
+  "/api/cases/:id/chat",
+  auth,
+  async (req, res) => {
+    const row = ownCase(
+      req.params.id,
+      req.doctorId
+    );
+
+    if (!row) {
+      return res.status(404).json({
+        error: "Case not found",
+      });
+    }
+
+    // The clinician must first save an assessment.
+    //
+    // Both AGREE and DISAGREE can use the chatbot.
+    if (
+      row.Status !== "REVIEWED" ||
+      !["AGREE", "DISAGREE"].includes(
+        row.Agreement
+      )
+    ) {
+      return res.status(409).json({
+        error:
+          "Save your assessment before starting the AI discussion.",
+      });
+    }
+
+    const message = String(
+      req.body?.message || ""
+    ).trim();
+
+    const history = Array.isArray(
+      req.body?.history
+    )
+      ? req.body.history.slice(-8)
+      : [];
+
+    if (!message) {
+      return res.status(400).json({
+        error: "A message is required",
+      });
+    }
+
+    if (message.length > 4000) {
+      return res.status(400).json({
+        error: "The message is too long",
+      });
+    }
+
+    try {
+      /*
+       * IMPORTANT:
+       *
+       * The browser does NOT tell the chatbot:
+       * - the AI grade
+       * - whether the doctor agreed
+       * - the corrected grade
+       * - the doctor's saved note/reason
+       *
+       * Those values come from our database.
+       *
+       * The browser only supplies the current chat message
+       * and previous conversation messages.
+       */
+
+      const correctedGrade =
+        row.CorrectedGrade == null
+          ? null
+          : Number(row.CorrectedGrade);
+
+      const reply = await chatCase({
+        model_grade: Number(row.Grade),
+
+        model_label:
+          GRADE_LABELS[row.Grade],
+
+        agreement:
+          row.Agreement,
+
+        corrected_grade:
+          correctedGrade,
+
+        corrected_label:
+          correctedGrade == null
+            ? null
+            : GRADE_LABELS[
+                correctedGrade
+              ],
+
+        doctor_note:
+          row.Reason || "",
+
+        message,
+
+        history: history.map(
+          (item) => ({
+            role:
+              item.role === "assistant"
+                ? "assistant"
+                : "user",
+
+            content: String(
+              item.content ??
+              item.text ??
+              ""
+            ).slice(0, 3000),
+          })
+        ),
+      });
+
+      console.log(
+        `[chat] case ${req.params.id.slice(
+          0,
+          8
+        )} ` +
+        `${row.Agreement} ` +
+        `by ${req.doctorId.slice(
+          0,
+          8
+        )}`
+      );
+
+      res.json({
+        reply,
+      });
+
+    } catch (err) {
+      console.error(
+        "[chat]",
+        err
+      );
+
+      res.status(502).json({
+        error:
+          "The contestable AI could not answer. Please try again.",
+      });
+    }
+  }
+);
 
 /* --------------------------------------------------------------- files --- */
 
