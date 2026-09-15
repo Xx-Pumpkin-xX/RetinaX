@@ -35,10 +35,6 @@ export default function RegionOverlay({ regions, size }) {
   if (!size?.width || !size?.height || !regions?.length) return null;
 
   const { width: w, height: h } = size;
-  // Label size in image pixels, so it looks the same on a 548px fundus and a
-  // 3000px one.
-  const font = Math.max(h * 0.030, 9);
-  const pad = font * 0.3;
 
   return (
     <svg className="overlay regions" viewBox={`0 0 ${w} ${h}`}
@@ -50,12 +46,6 @@ export default function RegionOverlay({ regions, size }) {
         const n = r.rank ?? i + 1;
         const poly = r.polygon?.length >= 3 ? r.polygon : null;
         const points = poly?.map(([x, y]) => `${x},${y}`).join(" ");
-
-        // Anchor the number to the outline itself, not to the padded box -
-        // the box is wider, and the label would float away from the shape.
-        const ax = poly ? Math.min(...poly.map((p) => p[0])) : r.x;
-        const ay = poly ? Math.min(...poly.map((p) => p[1])) : r.y;
-        const labelY = Math.max(0, ay - font - pad);
 
         return (
           <g key={n}>
@@ -76,12 +66,6 @@ export default function RegionOverlay({ regions, size }) {
                       className="region-line" vectorEffect="non-scaling-stroke" />
               </>
             )}
-            <rect x={ax} y={labelY} width={font * 1.5} height={font + pad}
-                  className="region-badge" />
-            <text x={ax + font * 0.75} y={labelY + font * 0.82 + pad / 2}
-                  textAnchor="middle" className="region-rank" fontSize={font}>
-              {n}
-            </text>
           </g>
         );
       })}

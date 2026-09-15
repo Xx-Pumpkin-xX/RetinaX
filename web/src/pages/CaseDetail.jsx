@@ -226,7 +226,7 @@ export default function CaseDetail() {
           {overlay === "regions" && (
             <div className="muted" style={{ fontSize: 12.5, padding: "0 16px 12px", lineHeight: 1.5 }}>
               {regions.length} area{regions.length > 1 ? "s" : ""} where the model's evidence for
-              grade {c.grade} was strongest, numbered by strength. These are{" "}
+              grade {c.grade} was strongest. These are{" "}
               <strong>attention regions, not detected lesions</strong> — the outline shows where
               the grading model looked, and is deliberately wider than any lesion inside it.
             </div>
