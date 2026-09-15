@@ -249,8 +249,15 @@ def score_to_grade(score):
     return int(sum(1 for t in load_thresholds() if score >= t))
 
 
-def predict_score(x):
-    """Regression output, averaged over TTA to match how validation ran."""
+def predict_score_views(x):
+    """Every TTA view's raw score, unaveraged.
+
+    The averaging used to happen here and the spread was discarded. It is the
+    cheapest honest uncertainty estimate we have: grade each view separately
+    and, if the original and its two flips land on different grades, the model
+    is not sure — see confidence.py. So the list is returned and the caller
+    averages.
+    """
     import torch
     model = load_model()
 
@@ -261,7 +268,12 @@ def predict_score(x):
                 views += [torch.flip(x, dims=[3]), torch.flip(x, dims=[2])]  # h-flip, v-flip
             return [float(model(v.to(_device)).squeeze()) for v in views]
 
-    scores = run_resilient(_run)
+    return run_resilient(_run)
+
+
+def predict_score(x):
+    """Regression output, averaged over TTA to match how validation ran."""
+    scores = predict_score_views(x)
     return sum(scores) / len(scores)
 
 

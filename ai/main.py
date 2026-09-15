@@ -147,7 +147,7 @@ def _standin(img: Image.Image):
 
 
 def predict(img: Image.Image, want_ccem: bool):
-    """Returns (grade, cam_or_None, ccem_or_None), each HxW float in 0..1."""
+    """Returns (grade, cam, ccem, crop_box, cropped_rgb, confidence)."""
     global _model, _thresholds
     if _thresholds is None:
         _thresholds = load_thresholds()
@@ -156,13 +156,17 @@ def predict(img: Image.Image, want_ccem: bool):
 
     if _model is None:
         grade, cam, ccem = _standin(img)
-        # The stand-in draws over the whole frame; there is no crop.
-        return grade, cam, (ccem if want_ccem else None), None, None
+        # The stand-in draws over the whole frame; there is no crop, and it has
+        # no real score, so there is nothing honest to say about confidence.
+        return grade, cam, (ccem if want_ccem else None), None, None, None
 
     # ---- real path ------------------------------------------------------
     import dr_adapter
     x, rgb, box = dr_adapter.preprocess(img)
-    grade = dr_adapter.score_to_grade(dr_adapter.predict_score(x))
+    views = dr_adapter.predict_score_views(x)
+    score = sum(views) / len(views)
+    grade = dr_adapter.score_to_grade(score)
+    conf = grade_confidence(views, dr_adapter.load_thresholds(), grade)
 
     # Grad-CAM++ is one backward pass, so it always runs. CCEM is three
     # explainers and hundreds of passes, so it runs only when asked for.
@@ -170,7 +174,7 @@ def predict(img: Image.Image, want_ccem: bool):
     ccem = dr_adapter.explain_ccem(x, rgb) if want_ccem else None
     # rgb is the cropped, CLAHE'd retina the model saw — the same image the
     # paper's figures are drawn over.
-    return grade, cam, ccem, box, rgb
+    return grade, cam, ccem, box, rgb, conf
 
 
 # How the activation map is painted.
@@ -184,6 +188,10 @@ def predict(img: Image.Image, want_ccem: bool):
 #
 # The overlay's opacity is controlled by the doctor in the interface, so the
 # PNG is rendered at full strength and the blend happens there.
+from heatmap_regions import suppress_reason, cam_regions  # noqa: E402
+from confidence import grade_confidence  # noqa: E402
+
+
 HEATMAP_STYLE = os.environ.get("HEATMAP_STYLE", "jet").lower()
 # How much of the jet map, versus the photograph, ends up in the blend.
 #
@@ -305,7 +313,7 @@ async def infer(
     want_ccem = CCEM_ON_UPLOAD if ccem is None else ccem
     img = Image.open(io.BytesIO(await file.read())).convert("RGB")
     try:
-        grade, cam, ccem_map, box, base = predict(img, want_ccem)
+        grade, cam, ccem_map, box, base, conf = predict(img, want_ccem)
     except Exception as e:
         # Say what actually broke in the response body. A bare "Internal Server
         # Error" means going to find the server's terminal and scrolling, which
@@ -322,8 +330,25 @@ async def infer(
                 "traceback": tb.splitlines()[-12:],
             },
         )
+    # A min-max normalised map always fills 0..1, so it paints a confident red
+    # blob whether or not the model found anything. Deciding NOT to draw one is
+    # therefore part of drawing it honestly — see heatmap_regions.py.
+    reason, fov_frac = suppress_reason(cam, int(grade), base)
+    show_cam = reason is None
+
     return {
         "grade": int(grade),
-        "heatmap_cam_png_base64": cam_to_png(cam, img.size, box, base),
-        "heatmap_ccem_png_base64": cam_to_png(ccem_map, img.size, box, base),
+        "heatmap_cam_png_base64": cam_to_png(cam, img.size, box, base) if show_cam else None,
+        "heatmap_ccem_png_base64": cam_to_png(ccem_map, img.size, box, base) if show_cam else None,
+        # Padded boxes around the strongest areas, in the ORIGINAL photograph's
+        # coordinates. Attention regions, not detected lesions: this CAM comes
+        # from a grading model, not a lesion detector.
+        "regions": cam_regions(cam, img.size, box, base) if show_cam else [],
+        "heatmap_suppressed": not show_cam,
+        "suppression_reason": reason,
+        "fov_heat_fraction": round(float(fov_frac), 3),
+        # How firm the grade is. A band and the numbers behind it — never a
+        # percentage, because a percentage would imply a calibration curve
+        # nobody has measured. See confidence.py.
+        "confidence": conf,
     }

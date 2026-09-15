@@ -14,6 +14,7 @@ import { seedDemo } from "./seed-demo.js";
 import { seedDoctors } from "./seed.js";
 import { UPLOAD_DIR } from "./paths.js";
 import { VERSION, versionLine } from "./version.js";
+import { chatOnce, chatStream, chatReachable, chatModel } from "./chat.js";
 
 const PORT = process.env.PORT || 3000;
 const SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
@@ -132,12 +133,15 @@ app.get("/api/health", async (_req, res) => {
   } catch {
     database = false;
   }
+  const assistant = await chatReachable();
+
   res.set("Cache-Control", "no-store");
   res.json({
     ok: database,
     ...VERSION,
     database,
     model,
+    assistant,
     mail: mailConfigured(),
     uptimeSeconds: Math.round(process.uptime()),
     node: process.version,
@@ -327,6 +331,33 @@ const reviewHistory = (caseId) =>
       reason: r.Reason,
       at: r.CreatedAt,
     }));
+
+/**
+ * The assistant. Behind `auth` deliberately: Ollama has no authentication of
+ * its own and a GPU behind it, so the session cookie is the only thing between
+ * the open internet and free inference on someone else's hardware.
+ *
+ * Streams by default. `?stream=0` returns one JSON answer instead, which is
+ * easier to debug with curl.
+ */
+app.post("/api/chat", auth, async (req, res) => {
+  const { messages } = req.body || {};
+  const wantsStream = req.query.stream !== "0";
+  try {
+    if (wantsStream) {
+      await chatStream(messages, res);
+    } else {
+      res.set("Cache-Control", "no-store");
+      res.json(await chatOnce(messages));
+    }
+  } catch (err) {
+    console.error("[chat]", err.message);
+    // Once streaming has begun the status line is already sent, so the only
+    // honest thing left is to end the stream.
+    if (res.headersSent) return res.end();
+    res.status(err.status || 502).json({ error: err.message || "assistant unavailable" });
+  }
+});
 
 app.get("/api/cases", auth, (req, res) => {
   const rows = db
