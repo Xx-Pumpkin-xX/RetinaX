@@ -197,10 +197,15 @@ textarea.input { height: auto; min-height: 78px; padding: 10px 13px; line-height
    segmentation mask - a claim that every pixel inside it is lesion - and this
    map comes from a grading model, which cannot support that. An outline says
    "look here", which is what it actually knows. */
-.region-line   { fill: none; stroke: #ffd166; stroke-width: 2; }
+/* Cyan, and not for taste: a fundus photograph is yellow, orange and red
+   almost everywhere, and hard exudates in particular are yellow. A yellow
+   marker would be the same colour as one of the findings it points at. Cyan is
+   the one hue the retina essentially never produces, so the outline always
+   reads as an annotation rather than as part of the image. */
+.region-line   { fill: none; stroke: #22d3ee; stroke-width: 2; }
 .region-shadow { fill: none; stroke: rgba(0,0,0,.65); stroke-width: 4.5; }
-.region-badge  { fill: #ffd166; }
-.region-rank   { fill: #10141a; font-weight: 700; font-family: inherit; }
+.region-badge  { fill: #22d3ee; }
+.region-rank   { fill: #04232b; font-weight: 700; font-family: inherit; }
 
 /* Native controls follow the theme accent instead of the browser blue. */
 input[type="range"],

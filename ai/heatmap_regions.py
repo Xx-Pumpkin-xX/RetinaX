@@ -51,16 +51,24 @@ FOV_HEAT_MIN = 0.60
 # much below 0.95 is not free: the regions merge into one blob covering half
 # the retina, which says nothing.
 REGION_QUANTILE = 0.95
-# What counts as "red" on the jet colormap the overlay is painted with.
-# jet runs blue -> cyan -> green -> yellow -> red, and everything from about
-# 0.80 up renders orange-red.
+# Where the outline is cut, as a level on the jet colormap the overlay is
+# painted with. jet runs blue -> cyan -> green -> yellow -> red: about 0.5 is
+# mid green, 0.75 yellow-orange, and 0.9 and up is red.
+#
+# 0.50 - mid green and hotter. Started at 0.80 (red only), which on most images
+# left a single small mark: the true peak is a few pixels wide, and outlining
+# only that says the model looked at one spot when it responded across a whole
+# area. Cutting at green takes in the shoulder of each response, which is the
+# extent a reader actually wants. The cost is real and worth stating: the lower
+# the cut, the more neighbouring responses merge into one region, and below
+# about 0.45 they fuse into a single blob covering much of the retina.
 #
 # This is an ABSOLUTE level on the map, not a quantile, and that is the point:
 # the outline then traces exactly the red area a clinician can see in the CAM
 # view. The two views become the same statement shown twice, rather than two
 # thresholds that happen to disagree. The quantile above survives only as a
 # fallback for a map with no red in it at all.
-RED_LEVEL = 0.80
+HOT_LEVEL = 0.50
 # The traced boundary is grown by this many pixels of the map's own grid, for
 # the same reason the boxes were padded: the CAM is coarse - a 600px input
 # downsampled to the last conv layer - and a boundary drawn tight to the
@@ -164,10 +172,10 @@ def cam_regions(cam, size, box=None, rgb=None,
     if values.size == 0:
         return []
 
-    # Red first. If the map has no red inside the retina - which happens on a
-    # flat response - fall back to the quantile so the caller still gets the
-    # strongest areas rather than nothing.
-    binary = ((cam >= RED_LEVEL) & inside).astype(np.uint8)
+    # The level cut first. If nothing inside the retina reaches it - which
+    # happens on a flat response - fall back to the quantile so the caller
+    # still gets the strongest areas rather than nothing.
+    binary = ((cam >= HOT_LEVEL) & inside).astype(np.uint8)
     if binary.sum() == 0:
         thr = float(np.quantile(values, quantile))
         binary = ((cam >= thr) & inside).astype(np.uint8)
