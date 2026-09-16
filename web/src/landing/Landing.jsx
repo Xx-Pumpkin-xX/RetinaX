@@ -3,8 +3,6 @@ import Navbar from "./Navbar.jsx";
 import Footer from "./Footer.jsx";
 import Hero from "./Hero.jsx";
 import PartnerLogos from "./PartnerLogos.jsx";
-import AboutUs from "./AboutUs.jsx";
-import Features from "./Features.jsx";
 import HowItWorks from "./HowItWorks.jsx";
 import ResearchCards from "./ResearchCards.jsx";
 import FinalCTA from "./FinalCTA.jsx";
@@ -21,8 +19,6 @@ export default function Landing() {
       <main>
         <Hero />
         <PartnerLogos />
-        <AboutUs />
-        <Features />
         <HowItWorks />
         <ResearchCards />
         <FinalCTA />

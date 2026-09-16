@@ -1,27 +1,30 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { api } from "../api.js";
 
 // One screen, three states. The reset state is entered by the link in the
 // email (/reset?token=...), so it is read from the URL rather than clicked to.
 const tokenFromUrl = () => new URLSearchParams(window.location.search).get("token");
 
-export default function Login({ onSignedIn, theme, onToggleTheme }) {
+export default function Login({ onSignedIn }) {
+  const location = useLocation();
+
   const [view, setView] = useState(() => (tokenFromUrl() ? "reset" : "login"));
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [keep, setKeep] = useState(true);
   const [error, setError] = useState(null);
-  const [note, setNote] = useState(null);
+  const [note, setNote] = useState(() =>
+    location.state?.reason === "upload"
+      ? "You need to log in first before using our product. If you haven't had an account yet, please sign up."
+      : null
+  );
   const [busy, setBusy] = useState(false);
 
   const DEMO = { email: "quang@retinax.ai", password: "retinax123" };
 
   function go(next) {
-    // Switching tabs clears the fields. Carrying a half-typed sign-up address
-    // over to the login form, or the reverse, only ever produces a confusing
-    // error.
     setEmail("");
     setPassword("");
     setView(next);
@@ -50,10 +53,6 @@ export default function Login({ onSignedIn, theme, onToggleTheme }) {
     e.preventDefault();
     run(async () => {
       const out = await api.forgotPassword(email);
-      // Deliberately the same message whether or not the address is
-      // registered — a different reply would tell an attacker which addresses
-      // have accounts. What does change is whether this build can send mail at
-      // all, which is a fact about the server, not about the account.
       setNote(
         out?.delivery === "email"
           ? "If that address has an account, a reset link is on its way. It expires in 30 minutes."
@@ -82,24 +81,15 @@ export default function Login({ onSignedIn, theme, onToggleTheme }) {
   return (
     <div className="stack" style={{ minHeight: "100vh", alignItems: "center", justifyContent: "center", padding: 22 }}>
       <div className="stack" style={{ width: 400, gap: 22 }}>
-        {/* A way back out. Someone who reached this screen by clicking "Sign in"
-            on the landing page, or by being redirected here, otherwise has only
-            the browser's back button — and after a redirect that lands them
-            here again. */}
         <Link to="/" className="linkish" style={{ alignSelf: "flex-start", fontSize: 13 }}>
           ← Back to RetinaX.ai
         </Link>
 
-        <div className="row" style={{ justifyContent: "space-between" }}>
-          <div className="stack" style={{ gap: 4 }}>
-            <div style={{ fontSize: 26, fontWeight: 600, letterSpacing: "-0.5px" }}>
-              RetinaX<span style={{ color: "var(--accent)" }}>.ai</span>
-            </div>
-            <div className="muted" style={{ fontSize: 13.5 }}>Diabetic retinopathy screening</div>
+        <div className="stack" style={{ gap: 4 }}>
+          <div style={{ fontSize: 26, fontWeight: 600, letterSpacing: "-0.5px" }}>
+            RetinaX<span style={{ color: "var(--accent)" }}>.ai</span>
           </div>
-          <button className="btn btn-ghost" style={{ height: 36, padding: "0 12px", fontSize: 13 }} onClick={onToggleTheme}>
-            {theme === "dark" ? "☀ Light mode" : "☾ Dark mode"}
-          </button>
+          <div className="muted" style={{ fontSize: 13.5 }}>Diabetic retinopathy screening</div>
         </div>
 
         {(view === "login" || view === "signup") && (
@@ -173,10 +163,6 @@ export default function Login({ onSignedIn, theme, onToggleTheme }) {
               {busy ? "Signing in…" : "Log in"}
             </button>
 
-            {/* The form starts empty — a login screen that arrives with
-                someone's credentials already in it reads as a mock-up, not a
-                clinical tool. The demo account is still one click away, but
-                as a deliberate action. */}
             <button type="button" className="linkish" style={{ alignSelf: "center", fontSize: 12.5 }}
                     onClick={() => { setEmail(DEMO.email); setPassword(DEMO.password); setError(null); }}>
               Use the demo account

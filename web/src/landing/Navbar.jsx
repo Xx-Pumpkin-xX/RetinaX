@@ -1,16 +1,20 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Eye } from "lucide-react";
+import { api } from "../api.js";
 
 const LINKS = [
-  { id: "about", label: "About Us" },
-  { id: "features", label: "Features" },
   { id: "how-it-works", label: "How It Works" },
 ];
 
 export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const [active, setActive] = useState("");
+  const [me, setMe] = useState(undefined); // undefined = still checking, null = not signed in
+
+  useEffect(() => {
+    api.me().then(setMe).catch(() => setMe(null));
+  }, []);
 
   useEffect(() => {
     const onScroll = () => {
@@ -47,7 +51,11 @@ export default function Navbar() {
               {link.label}
             </button>
           ))}
-          <Link to="/login" className="btn btn-primary btn-sm nav-cta">Sign in</Link>
+          {me ? (
+            <Link to="/cases" className="btn btn-primary btn-sm nav-cta">My cases</Link>
+          ) : (
+            <Link to="/login" className="btn btn-primary btn-sm nav-cta">Sign in</Link>
+          )}
         </nav>
       </div>
     </header>

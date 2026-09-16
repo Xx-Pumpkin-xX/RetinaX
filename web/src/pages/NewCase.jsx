@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { api } from "../api.js";
 
@@ -23,6 +23,22 @@ export default function NewCase() {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
+
+  // Có dữ liệu chưa lưu nếu đã gõ patient code / birth year, hoặc đã chọn ảnh cho ít nhất 1 mắt.
+  const dirty = Boolean(
+    form.patientCode.trim() || form.birthYear.trim() || images.OD || images.OS
+  );
+
+  // Đóng tab / reload / gõ URL khác / rời website — trình duyệt tự hỏi xác nhận.
+  useEffect(() => {
+    function handleBeforeUnload(e) {
+      if (!dirty) return;
+      e.preventDefault();
+      e.returnValue = "";
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [dirty]);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const chosen = EYES.filter((e) => images[e.key]);
@@ -74,10 +90,18 @@ export default function NewCase() {
     navigate(created.length === 1 ? `/cases/${created[0].id}` : "/cases");
   }
 
+  function goToCases(e) {
+    if (!dirty) return;
+    e.preventDefault();
+    if (window.confirm("You have unsaved changes. Leaving this page will discard them. Continue?")) {
+      navigate("/cases");
+    }
+  }
+
   return (
     <div className="page stack" style={{ gap: 18, maxWidth: 1040 }}>
       <div className="stack" style={{ gap: 6 }}>
-        <Link to="/cases" className="muted" style={{ fontSize: 13 }}>← My cases</Link>
+        <Link to="/cases" className="muted" style={{ fontSize: 13 }} onClick={goToCases}>← My cases</Link>
         <h1 style={{ fontSize: 23, fontWeight: 600, margin: 0 }}>New case</h1>
       </div>
 

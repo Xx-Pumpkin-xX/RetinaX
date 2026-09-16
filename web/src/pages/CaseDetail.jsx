@@ -49,6 +49,21 @@ export default function CaseDetail() {
   const [deleteError, setDeleteError] = useState(null);
   const [explainError, setExplainError] = useState(null);
 
+  // Có thay đổi chưa lưu nếu đang mở form sửa thông tin bệnh nhân,
+  // hoặc đang điền/sửa đánh giá (Agree/Disagree) mà chưa bấm Save.
+  const dirty = editing !== null || agreement !== null;
+
+  // Đóng tab / reload / gõ URL khác / rời website — trình duyệt tự hỏi xác nhận.
+  useEffect(() => {
+    function handleBeforeUnload(e) {
+      if (!dirty) return;
+      e.preventDefault();
+      e.returnValue = "";
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [dirty]);
+
   useEffect(() => {
     let alive = true;
     let timer;
@@ -78,6 +93,14 @@ export default function CaseDetail() {
     load();
     return () => { alive = false; clearTimeout(timer); };
   }, [id]);
+
+  function goToCases(e) {
+    if (!dirty) return;
+    e.preventDefault();
+    if (window.confirm("You have unsaved changes. Leaving this page will discard them. Continue?")) {
+      navigate("/cases");
+    }
+  }
 
   async function removeCase() {
     setDeleting(true);
@@ -164,7 +187,7 @@ export default function CaseDetail() {
     <div className="page stack" style={{ gap: 16 }}>
       <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-end" }}>
         <div className="stack" style={{ gap: 4 }}>
-          <Link to="/cases" className="muted" style={{ fontSize: 13 }}>← My cases</Link>
+          <Link to="/cases" className="muted" style={{ fontSize: 13 }} onClick={goToCases}>← My cases</Link>
           <div className="row" style={{ gap: 12, alignItems: "baseline" }}>
             <span className="mono" style={{ fontSize: 22, fontWeight: 500 }}>{c.patientCode}</span>
             <span className="muted">{c.eye === "OD" ? "Right eye · OD" : "Left eye · OS"}</span>

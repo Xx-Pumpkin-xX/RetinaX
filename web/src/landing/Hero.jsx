@@ -1,8 +1,20 @@
-import { Link } from "react-router-dom";
-import { ArrowRight, Layers, ScanEye, Sparkles } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Layers, ScanEye, Sparkles, UploadCloud } from "lucide-react";
 import SafeImage from "./SafeImage.jsx";
+import { api } from "../api.js";
 
 export default function Hero() {
+  const navigate = useNavigate();
+
+  const handleUploadClick = async () => {
+    try {
+      await api.me(); // throws if not signed in (401)
+      navigate("/cases");
+    } catch {
+      navigate("/login", { state: { reason: "upload" } });
+    }
+  };
+
   return (
     <section className="hero-dark">
       <div className="container hero-grid">
@@ -22,26 +34,20 @@ export default function Hero() {
 
         <div className="hero-copy">
           <h1 className="h1">
-            Explainable AI for
+            AI tool assisting doctors in
             <br />
-            Diabetic Retinopathy Screening
+            screening diabetic retinopathy
           </h1>
 
           <p className="hero-sub">
-            Support faster retinal grading with AI while keeping the evidence
-            visible to clinicians.
-          </p>
-
-          <p className="hero-body">
-            RetinaX.ai analyses fundus photographs, estimates
-            diabetic-retinopathy severity, and provides visual explanations
-            through conventional XAI methods and our proposed CCEM framework.
+            Click the Upload button to upload the image. Our AI will process it
+            and send back the screening result to you.
           </p>
 
           <div className="hero-actions">
-            <Link to="/login" className="btn btn-retina btn-lg">
-              Sign in <ArrowRight size={17} />
-            </Link>
+            <button onClick={handleUploadClick} className="btn btn-retina btn-lg">
+              Upload <UploadCloud size={17} />
+            </button>
           </div>
 
           <p className="disclaimer">
