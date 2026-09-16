@@ -36,6 +36,12 @@ export default function CaseDetail() {
   const [agreement, setAgreement] = useState(null);
   const [corrected, setCorrected] = useState(null);
   const [reason, setReason] = useState("");
+
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatting, setChatting] = useState(false);
+  const [chatError, setChatError] = useState(null);
+  
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState(null);
   const [regrading, setRegrading] = useState(false);
