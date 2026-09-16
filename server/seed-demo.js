@@ -16,6 +16,13 @@ const SEXES = ["F", "M"];
 const EYES = ["OD", "OS"];
 const PRECOMPUTED = path.join("demo-images", "precomputed");
 
+// CCEM fuses three explainers and costs minutes of GPU per image. That is the
+// right trade for a handful of demo cases and the wrong one for fifteen, so it
+// is a switch rather than a constant: SEED_CCEM=0 seeds with Grad-CAM++ only,
+// in seconds, and the fused map can be computed later from the case screen for
+// the two or three cases anyone will actually look at.
+const WANT_CCEM = process.env.SEED_CCEM !== "0";
+
 /**
  * Ask the live grading service; if it cannot be reached, fall back to the
  * answers committed by `npm run precompute`.
@@ -28,7 +35,7 @@ async function gradeOrFallback(destPath, file) {
   try {
     // Seeding is an offline batch, so it can afford CCEM — which is the whole
     // point of the demo cases: they are the ones that show the fused map.
-    return { ...(await gradeImage(path.resolve(destPath), { ccem: true })), source: "model" };
+    return { ...(await gradeImage(path.resolve(destPath), { ccem: WANT_CCEM })), source: "model" };
   } catch (err) {
     const stem = path.parse(file).name;
     try {
@@ -104,12 +111,19 @@ export async function seedDemo({ force = false, doctorId = null } = {}) {
           1955 + ((i * 7) % 30), SEXES[i % 2], EYES[i % 2], dest, created);
 
     try {
-      const { grade, camPath, ccemPath, source } = await gradeOrFallback(dest, file);
+      const { grade, camPath, ccemPath, regions, imageWidth, imageHeight,
+              suppressionReason, source } = await gradeOrFallback(dest, file);
       if (source === "precomputed") usedFallback++;
       db.prepare(
-        `INSERT INTO predictions (PredictionID, CaseID, Grade, HeatmapCamPath, HeatmapCcemPath, CreatedAt)
-         VALUES (?,?,?,?,?,?)`
-      ).run(randomUUID(), id, grade, camPath, ccemPath, created);
+        // The region columns belong here too. A seeded case that carries a
+        // grade and a heatmap but no regions looks broken on the case screen -
+        // the Regions control simply never appears - and nothing errors.
+        `INSERT INTO predictions (PredictionID, CaseID, Grade, HeatmapCamPath, HeatmapCcemPath,
+                                  Regions, ImageWidth, ImageHeight, SuppressionReason, CreatedAt)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`
+      ).run(randomUUID(), id, grade, camPath, ccemPath,
+            JSON.stringify(regions ?? []), imageWidth ?? null, imageHeight ?? null,
+            suppressionReason ?? null, created);
       db.prepare("UPDATE cases SET Status='GRADED' WHERE CaseID=?").run(id);
 
       // Leave the two newest awaiting review so there is something to demo,
