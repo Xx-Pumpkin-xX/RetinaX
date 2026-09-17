@@ -678,31 +678,14 @@ app.post("/api/cases/:id/details", auth, (req, res) => {
 });
 
 /**
- * Delete a case.
+ * Delete a case and everything belonging to it.
  *
- * Only a case nobody has assessed. A REVIEWED case carries a clinician's
- * recorded judgement, and the disagreement between that judgement and the
- * model's grade is the thing this whole system exists to preserve — offering a
- * button that quietly destroys one would undo the argument the project makes.
- * So: FAILED, PROCESSING and GRADED can go; REVIEWED is refused, with a reason.
- *
- * That still covers the case this exists for. A failed upload holds nothing at
- * all: no grade, no explanation, no decision. It is litter in a worklist, and
- * litter in a worklist costs attention.
- *
- * Everything belonging to the case goes with it — the prediction, any review
- * rows, the photograph and both heatmaps — because a half-deleted case is
- * worse than either outcome.
+ * This removes the prediction, review rows, photograph and both heatmaps.
+ * ownCase ensures that doctors can delete only their own cases.
  */
 app.delete("/api/cases/:id", auth, async (req, res) => {
   const row = ownCase(req.params.id, req.doctorId);
   if (!row) return res.status(404).json({ error: "Case not found" });
-
-  if (row.Status === "REVIEWED") {
-    return res.status(409).json({
-      error: "This case has been reviewed. A recorded assessment is a clinical record and is not deleted here.",
-    });
-  }
 
   // Rows first: if the unlinks fail we are left with unreferenced files, which
   // is untidy. The reverse order leaves a case pointing at nothing, which is a
