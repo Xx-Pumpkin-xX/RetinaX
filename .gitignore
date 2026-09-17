@@ -57,3 +57,17 @@ retinax-ai-*.tar.gz
 
 _archive/
 *.zip
+
+# An unpacked deploy tar. The .tar.gz above is ignored; the FOLDER it extracts
+# to was not, so a stray `git add .` would have committed a second copy of the
+# whole server under a version-stamped name.
+retinax-server-*/
+retinax-ai-*/
+
+# Lesion model weights. ai/*.pth above only covers the top level, and these are
+# derivative works of a dataset held under a signed agreement - they must never
+# reach a public remote.
+ai/weights/
+ai/**/*.pth
+*.pt
+*.onnx
