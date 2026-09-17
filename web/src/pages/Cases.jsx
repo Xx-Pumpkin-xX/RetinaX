@@ -81,6 +81,7 @@ export default function Cases() {
   const [referableOnly, setReferableOnly] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [clearError, setClearError] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -142,6 +143,24 @@ export default function Cases() {
       setError(e.message);
     }
     setClearing(false);
+  }
+
+  async function removeCase(c) {
+    if (c.status === "REVIEWED") return;
+    if (!window.confirm("Delete this case? The photograph go with it. This cannot be undone.")) {
+      return;
+    }
+
+    setDeletingId(c.id);
+    setClearError(null);
+    try {
+      await api.deleteCase(c.id);
+      setCases((current) => current?.filter((item) => item.id !== c.id) ?? current);
+    } catch (e) {
+      setClearError(e.message);
+    } finally {
+      setDeletingId(null);
+    }
   }
 
   return (
@@ -246,7 +265,7 @@ export default function Cases() {
         <div className="card" style={{ overflow: "hidden" }}>
           <table className="table">
             <thead>
-              <tr><th>Patient</th><th>Eye</th><th>Captured</th><th>AI grade</th><th>Status</th></tr>
+              <tr><th>Patient</th><th>Eye</th><th>Captured</th><th>AI grade</th><th>Status</th><th aria-label="Actions" /></tr>
             </thead>
             <tbody>
               {patients.map((p) =>
@@ -278,6 +297,26 @@ export default function Cases() {
                       )}
                     </td>
                     <td><StatusCell c={c} /></td>
+                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                      {c.status === "REVIEWED" ? (
+                        <span className="muted" style={{ fontSize: 12 }} title="Reviewed cases are retained as clinical records">
+                          Retained
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="linkish"
+                          style={{ color: "var(--danger)", fontSize: 12.5 }}
+                          disabled={deletingId === c.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeCase(c);
+                          }}
+                        >
+                          {deletingId === c.id ? "Removing…" : "Remove"}
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))
               )}
