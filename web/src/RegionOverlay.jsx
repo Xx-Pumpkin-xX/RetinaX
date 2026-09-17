@@ -31,15 +31,18 @@
  * measuring anything. Getting this wrong points at the wrong part of the
  * retina, which is worse than pointing at nothing.
  */
-export default function RegionOverlay({ regions, size }) {
+// tone picks the stroke colour: "region" for the grading model's attention,
+// "lesion" for a lesion segmentation. They are different claims about the eye
+// and should not arrive in the same colour, even though only one shows at once.
+export default function RegionOverlay({ regions, size, tone = "region", label }) {
   if (!size?.width || !size?.height || !regions?.length) return null;
 
   const { width: w, height: h } = size;
 
   return (
-    <svg className="overlay regions" viewBox={`0 0 ${w} ${h}`}
+    <svg className={`overlay regions ${tone}`} viewBox={`0 0 ${w} ${h}`}
          preserveAspectRatio="xMidYMid meet" role="img"
-         aria-label={`${regions.length} attention region${regions.length > 1 ? "s" : ""}`}>
+         aria-label={label ?? `${regions.length} attention region${regions.length > 1 ? "s" : ""}`}>
       {regions.map((r, i) => {
         // rank comes from the service; rows stored before it existed fall back
         // to their position in the list, which is already sorted by strength.

@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from "react-router-dom";
 import { api, GRADES, gradeVar } from "../api.js";
 import ApiImage from "../ApiImage.jsx";
 import RegionOverlay from "../RegionOverlay.jsx";
+import LesionBar, { LESIONS } from "../LesionBar.jsx";
 
 // "Default" is always available — it is the photograph with nothing on top.
 // CAM and CCEM appear only when the service actually returned that map, so the
@@ -51,6 +52,7 @@ export default function CaseDetail() {
   const [savingDetails, setSavingDetails] = useState(false);
   const [detailsError, setDetailsError] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState(null);
   const [explainError, setExplainError] = useState(null);
@@ -69,6 +71,15 @@ export default function CaseDetail() {
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [dirty]);
+
+  // Escape closes the delete dialog, but not once the request is in flight:
+  // there is nothing to go back to after the rows are gone.
+  useEffect(() => {
+    if (!confirmDelete) return;
+    const onKey = (e) => { if (e.key === "Escape" && !deleting) setConfirmDelete(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [confirmDelete, deleting]);
 
   useEffect(() => {
     let alive = true;
@@ -112,7 +123,7 @@ export default function CaseDetail() {
     setDeleting(true);
     setDeleteError(null);
     try {
-      await api.deleteCase(id);
+      await api.deleteCase(id, c?.status === "REVIEWED" ? "DELETE-REVIEWED" : undefined);
       navigate("/cases", { replace: true });
     } catch (err) {
       setDeleteError(err.message);
@@ -252,6 +263,13 @@ function submitChat(e) {
   if (!c) return <div className="page muted">Loading…</div>;
 
   const available = c.overlays || [];
+
+  // One overlay control drives everything on the photograph, so a lesion class
+  // is just another value of it: "lesion:MA". That makes the classes mutually
+  // exclusive with each other and with the heatmaps for free.
+  const activeLesion = overlay.startsWith("lesion:") ? overlay.slice(7) : null;
+  const lesionShown = (c.lesions?.classes || []).find((l) => l.key === activeLesion);
+  const lesionName = LESIONS.find((l) => l.key === activeLesion)?.name ?? activeLesion;
   const regions = c.regions || [];
   const suppressed = c.suppressionReason ? SUPPRESSED[c.suppressionReason] : null;
   const reviewed = c.status === "REVIEWED";
@@ -288,7 +306,12 @@ function submitChat(e) {
             {overlay === "regions" && (
               <RegionOverlay regions={regions} size={c.imageSize} />
             )}
-            {overlay !== "Default" && overlay !== "regions" && (
+            {lesionShown && (
+              <RegionOverlay tone="lesion" size={c.imageSize}
+                             label={`${lesionShown.count} ${lesionName} marked`}
+                             regions={(lesionShown.polygons || []).map((p, i) => ({ polygon: p, rank: i + 1 }))} />
+            )}
+            {overlay !== "Default" && overlay !== "regions" && !activeLesion && (
               <ApiImage className="overlay" path={`/api/cases/${c.id}/heatmap/${overlay}`}
                         alt={`${overlay.toUpperCase()} explanation overlay`} style={{ opacity }} />
             )}
@@ -312,12 +335,23 @@ function submitChat(e) {
             </div>
             <input className="grow" type="range" min="0" max="1" step="0.01" value={opacity}
                    onChange={(e) => setOpacity(Number(e.target.value))}
-                   disabled={overlay === "Default" || overlay === "regions"}
+                   disabled={overlay === "Default" || overlay === "regions" || !!activeLesion}
                    aria-label="Overlay opacity" />
             <span className="mono muted" style={{ fontSize: 12.5, width: 40 }}>
               {Math.round(opacity * 100)}%
             </span>
           </div>
+          <LesionBar lesions={c.lesions} active={activeLesion}
+                     onPick={(k) => setOverlay(k ? `lesion:${k}` : "Default")} />
+
+          {lesionShown && (
+            <div className="muted" style={{ fontSize: 12.5, padding: "0 16px 12px", lineHeight: 1.5 }}>
+              {lesionShown.count} area{lesionShown.count === 1 ? "" : "s"} marked as{" "}
+              <strong>{lesionName}</strong> by a lesion model, which is a different model from the
+              one that produced grade {c.grade}. The two can disagree; neither overrules your reading.
+            </div>
+          )}
+
           {available.length === 0 && (
             <div className="muted" style={{ fontSize: 12.5, padding: "0 16px 12px" }}>
               {suppressed || "No explanation map was returned for this image."}
@@ -829,36 +863,63 @@ function submitChat(e) {
 )}
 
 
-          {/* Deleting is deliberately last, quiet, and two-step. A reviewed
-              case is refused by the server, so the control says so rather than
-              offering something that will fail. */}
-          {reviewed ? (
-            <div className="muted" style={{ fontSize: 11.5, textAlign: "center" }}>
-              A reviewed case is a clinical record and is not deleted here.
-            </div>
-          ) : confirmDelete ? (
-            <div className="card stack" style={{ padding: 14, gap: 10 }}>
-              <div style={{ fontSize: 13.5, lineHeight: 1.5 }}>
-                Delete this case? The photograph
-                {available.length ? ", its explanation maps" : ""} and the model's
-                grade go with it. This cannot be undone.
+          {/* Deleting is last and quiet, and it opens a dialog rather than
+              expanding in place: an action with no undo should interrupt the
+              page. A reviewed case asks for the patient code typed out, so a
+              recorded assessment cannot go on one stray click. */}
+          <button type="button" className="linkish"
+                  style={{ alignSelf: "center", fontSize: 12.5, color: "var(--danger)" }}
+                  onClick={() => { setConfirmText(""); setDeleteError(null); setConfirmDelete(true); }}>
+            Delete this case
+          </button>
+
+          {confirmDelete && (
+            <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="del-title"
+                 onMouseDown={(e) => { if (e.target === e.currentTarget && !deleting) setConfirmDelete(false); }}>
+              <div className="modal stack" style={{ gap: 12 }}>
+                <h3 id="del-title" className="modal-title">Delete this case?</h3>
+                <div style={{ fontSize: 13.5, lineHeight: 1.55 }}>
+                  The photograph{available.length ? ", its explanation maps" : ""} and the
+                  model’s grade go with it. This cannot be undone.
+                </div>
+
+                {reviewed && (
+                  <>
+                    <div className="modal-losing">
+                      This case has a recorded assessment. Deleting it also removes:
+                      <div>· the model’s grade — {c.gradeLabel ?? "—"}</div>
+                      <div>
+                        · your assessment — {c.agreement ?? "—"}
+                        {c.correctedGrade != null && ` (corrected to ${c.correctedGrade})`}
+                      </div>
+                      <div>· every earlier amendment of it</div>
+                    </div>
+                    {/* The code is shown outside the label because .label is
+                        uppercased, and you cannot ask someone to copy a string
+                        exactly while showing them a different one. */}
+                    <label className="label" htmlFor="del-code">
+                      Confirm by typing the patient code
+                    </label>
+                    <div className="mono" style={{ fontSize: 13.5, marginTop: -6 }}>{c.patientCode}</div>
+                    <input id="del-code" className="input mono" autoComplete="off" autoFocus
+                           value={confirmText} disabled={deleting}
+                           onChange={(e) => setConfirmText(e.target.value)} />
+                  </>
+                )}
+
+                {deleteError && <div className="err">{deleteError}</div>}
+
+                <div className="row" style={{ gap: 10 }}>
+                  <button className="btn grow" onClick={removeCase}
+                          disabled={deleting || (reviewed && confirmText.trim() !== c.patientCode)}
+                          style={{ background: "var(--danger)", borderColor: "var(--danger)" }}>
+                    {deleting ? "Deleting…" : "Delete permanently"}
+                  </button>
+                  <button className="btn btn-ghost" onClick={() => setConfirmDelete(false)}
+                          disabled={deleting}>Cancel</button>
+                </div>
               </div>
-              {deleteError && <div className="err">{deleteError}</div>}
-              <div className="row" style={{ gap: 10 }}>
-                <button className="btn grow" onClick={removeCase} disabled={deleting}
-                        style={{ background: "var(--danger)", borderColor: "var(--danger)" }}>
-                  {deleting ? "Deleting…" : "Delete permanently"}
-                </button>
-                <button className="btn btn-ghost" onClick={() => setConfirmDelete(false)}
-                        disabled={deleting}>Cancel</button>
-              </div>
             </div>
-          ) : (
-            <button type="button" className="linkish"
-                    style={{ alignSelf: "center", fontSize: 12.5, color: "var(--danger)" }}
-                    onClick={() => setConfirmDelete(true)}>
-              Delete this case
-            </button>
           )}
         </div>
       </div>

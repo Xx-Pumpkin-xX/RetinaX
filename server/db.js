@@ -136,6 +136,9 @@ ensureColumn("predictions", "ImageHeight", "INTEGER");
 // The screen has to say which, because a missing overlay with no explanation
 // reads as a failure, and this is a finding.
 ensureColumn("predictions", "SuppressionReason", "TEXT");
+// The six lesion classes as one JSON block. NULL means the lesion models did
+// not run for this case, which is a different fact from "found nothing".
+ensureColumn("predictions", "Lesions", "TEXT");
 
 export const GRADE_LABELS = [
   "No DR",

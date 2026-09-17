@@ -323,8 +323,21 @@ const caseRow = (row, full = false) => ({
       ? { width: row.ImageWidth, height: row.ImageHeight }
       : null,
     suppressionReason: row.SuppressionReason ?? null,
+    lesions: parseLesions(row.Lesions),
   } : {}),
 });
+
+// Null when the column is empty or unreadable, so the screen can say "not
+// assessed" rather than inventing six negative findings out of a missing row.
+function parseLesions(json) {
+  if (!json) return null;
+  try {
+    const v = JSON.parse(json);
+    return v && Array.isArray(v.classes) ? v : null;
+  } catch {
+    return null;
+  }
+}
 
 function parseRegions(json) {
   if (!json) return [];
@@ -476,14 +489,15 @@ app.post("/api/cases", auth, upload.single("image"), async (req, res) => {
         patientSex || null, eyePosition, req.file.path, now);
 
   try {
-    const { grade, camPath, ccemPath, regions, imageWidth, imageHeight, suppressionReason } =
+    const { grade, camPath, ccemPath, regions, imageWidth, imageHeight, suppressionReason, lesions } =
       await gradeImage(path.resolve(req.file.path));
     db.prepare(
       `INSERT INTO predictions (PredictionID, CaseID, Grade, HeatmapCamPath, HeatmapCcemPath,
-                                Regions, ImageWidth, ImageHeight, SuppressionReason, CreatedAt)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`
+                                Regions, ImageWidth, ImageHeight, SuppressionReason, Lesions, CreatedAt)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`
     ).run(randomUUID(), id, grade, camPath, ccemPath, JSON.stringify(regions),
-          imageWidth, imageHeight, suppressionReason, new Date().toISOString());
+          imageWidth, imageHeight, suppressionReason,
+          lesions ? JSON.stringify(lesions) : null, new Date().toISOString());
     db.prepare("UPDATE cases SET Status = 'GRADED' WHERE CaseID = ?").run(id);
     await dropSupersededFailures(req.doctorId, patientCode.trim(), eyePosition, id);
   } catch (err) {
@@ -515,14 +529,15 @@ app.post("/api/cases/:id/regrade", auth, async (req, res) => {
 
   db.prepare("UPDATE cases SET Status = 'PROCESSING' WHERE CaseID = ?").run(req.params.id);
   try {
-    const { grade, camPath, ccemPath, regions, imageWidth, imageHeight, suppressionReason } =
+    const { grade, camPath, ccemPath, regions, imageWidth, imageHeight, suppressionReason, lesions } =
       await gradeImage(path.resolve(row.ImagePath));
     db.prepare(
       `INSERT INTO predictions (PredictionID, CaseID, Grade, HeatmapCamPath, HeatmapCcemPath,
-                                Regions, ImageWidth, ImageHeight, SuppressionReason, CreatedAt)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`
+                                Regions, ImageWidth, ImageHeight, SuppressionReason, Lesions, CreatedAt)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`
     ).run(randomUUID(), req.params.id, grade, camPath, ccemPath, JSON.stringify(regions),
-          imageWidth, imageHeight, suppressionReason, new Date().toISOString());
+          imageWidth, imageHeight, suppressionReason,
+          lesions ? JSON.stringify(lesions) : null, new Date().toISOString());
     db.prepare("UPDATE cases SET Status = 'GRADED' WHERE CaseID = ?").run(req.params.id);
     await dropSupersededFailures(req.doctorId, row.PatientCode, row.EyePosition, req.params.id);
   } catch (err) {
@@ -557,7 +572,7 @@ app.post("/api/cases/:id/explain", auth, async (req, res) => {
   const wantCcem = req.query.ccem !== "0";
 
   try {
-    const { camPath, ccemPath, regions, imageWidth, imageHeight, suppressionReason } =
+    const { camPath, ccemPath, regions, imageWidth, imageHeight, suppressionReason, lesions } =
       await explain(path.resolve(row.ImagePath), row.Grade, { ccem: wantCcem });
     // COALESCE on both, so a Grad-CAM++-only redraw keeps an existing CCEM map
     // rather than deleting it. The grade is not touched — BR-4 — only pictures.
@@ -568,13 +583,16 @@ app.post("/api/cases/:id/explain", auth, async (req, res) => {
               Regions           = ?,
               ImageWidth        = ?,
               ImageHeight       = ?,
-              SuppressionReason = ?
+              SuppressionReason = ?,
+              Lesions           = COALESCE(?, Lesions)
         WHERE CaseID = ?`
+    // Lesions is COALESCEd, unlike Regions: a redraw that ran no lesion
+    // models must not erase a block an earlier run produced.
     // Regions are overwritten rather than COALESCEd: they were just recomputed
     // from this image, and keeping the previous set would leave the screen
     // marking areas the current map no longer supports.
     ).run(camPath, ccemPath, JSON.stringify(regions), imageWidth, imageHeight,
-          suppressionReason, req.params.id);
+          suppressionReason, lesions ? JSON.stringify(lesions) : null, req.params.id);
 
     // Only once the row points at the new files: a crash between writing them
     // and committing the row would otherwise leave the case pointing at a map
