@@ -29,14 +29,11 @@ export default function Hero() {
 
                     <span className="float-badge badge-a"><Sparkles size={14} /> Explainable AI</span>
                     <span className="float-badge badge-b"><ScanEye size={14} /> Lesion-aware</span>
-                    <span className="float-badge badge-c"><Layers size={14} /> CCEM</span>
                 </div>
 
                 <div className="hero-copy">
                     <h1 className="h1">
-                        AI tool assisting doctors in
-                        <br />
-                        screening diabetic retinopathy
+                        AI tool assisting doctors in screening diabetic retinopathy
                     </h1>
 
                     <p className="hero-sub">

@@ -22,7 +22,6 @@
 .rx-landing .input,
 .rx-landing .disclaimer,
 .rx-landing .note,
-.rx-landing .brand,
 .rx-landing .dot,
 .rx-landing .seg,
 .rx-landing .mono {
@@ -303,9 +302,6 @@
   background: transparent;
   backdrop-filter: none;
 }
-.rx-landing .navbar-transparent .brand {
-  color: #fff;
-}
 .rx-landing .navbar-transparent .nav-link {
   color: rgba(255, 255, 255, 0.82);
 }
@@ -336,12 +332,6 @@
   align-items: center;
   justify-content: space-between;
   height: 72px;
-}
-.rx-landing .brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--navy-deep);
 }
 .rx-landing .brand-mark {
   width: 32px;

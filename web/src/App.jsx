@@ -1,21 +1,12 @@
 import { useEffect, useState } from "react";
 import { Routes, Route, Navigate, Link, useNavigate, useLocation } from "react-router-dom";
+import { Eye } from "lucide-react";
 import { api } from "./api.js";
 import Landing from "./landing/Landing.jsx";
 import Login from "./pages/Login.jsx";
 import Cases from "./pages/Cases.jsx";
 import NewCase from "./pages/NewCase.jsx";
 import CaseDetail from "./pages/CaseDetail.jsx";
-
-function Eye({ size = 21 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-         stroke="var(--accent)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M1.6 12S5.2 5 12 5s10.4 7 10.4 7-3.6 7-10.4 7S1.6 12 1.6 12Z" />
-      <circle cx="12" cy="12" r="3.3" />
-    </svg>
-  );
-}
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = still checking
@@ -42,7 +33,7 @@ export default function App() {
     return (
       <div className="stack" style={{ height: "100vh", alignItems: "center", justifyContent: "center", gap: 14 }}>
         <div className="row" style={{ gap: 11 }}>
-          <Eye size={30} />
+          <Eye size={30} color="var(--accent)" />
           <span style={{ fontSize: 26, fontWeight: 600 }}>RetinaX<span style={{ color: "var(--accent)" }}>.ai</span></span>
         </div>
         <div className="muted">Preparing your worklist…</div>
@@ -74,7 +65,7 @@ export default function App() {
     <>
       <header className="header">
         <Link to="/cases" className="brand" style={{ color: "var(--ink)" }}>
-          <Eye />
+          <Eye color="var(--accent)" />
           <span>RetinaX<span style={{ color: "var(--accent)" }}>.ai</span></span>
         </Link>
         <div className="row" style={{ gap: 14 }}>

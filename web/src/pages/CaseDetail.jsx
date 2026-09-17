@@ -12,8 +12,7 @@ const when = (iso) =>
     { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 
 const METHODS = [
-  { key: "cam", label: "CAM" },
-  { key: "ccem", label: "CCEM" },
+  { key: "cam", label: "Grad-CAM" },
 ];
 
 // Why the service drew no map. Said out loud, because an overlay control that
@@ -84,7 +83,6 @@ export default function CaseDetail() {
           const has = row.overlays || [];
           setOverlay(
             row.regions?.length ? "regions"
-              : has.includes("ccem") ? "ccem"
               : has.includes("cam") ? "cam"
               : "Default"
           );
@@ -135,12 +133,12 @@ export default function CaseDetail() {
   }
 
   async function redraw({ ccem }) {
-    setExplaining(ccem ? "ccem" : "cam");
+    setExplaining("cam");
     setExplainError(null);
     try {
-      const updated = await api.explain(id, { ccem });
+      const updated = await api.explain(id, { ccem: false });
       setCase(updated);
-      setOverlay(ccem ? "ccem" : "cam");
+      setOverlay("cam");
     } catch (err) {
       setExplainError(err.message);
     } finally {
@@ -334,22 +332,12 @@ function submitChat(e) {
           {c.grade != null && (
             <div className="stack" style={{ gap: 8, padding: "0 16px 14px" }}>
               <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
-                {available.includes("ccem")
-                  ? "CCEM fuses Grad-CAM++, Ada-SISE and SmoothIG, weighted by agreement. Redrawing re-renders the overlay from the current model without changing the grade."
-                  : "Grad-CAM++ only. CCEM fuses three explainers — Grad-CAM++, Ada-SISE and SmoothIG — weighted by agreement, and takes a few minutes on the GPU, so it is computed when you ask rather than on every upload."}
+                Grad-CAM explanation overlay. Redrawing re-renders the overlay from the current model without changing the grade.
               </div>
               {explainError && <div className="err">{explainError}</div>}
               <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
-                <button className="btn btn-ghost" onClick={() => redraw({ ccem: false })}
-                        disabled={Boolean(explaining)}
-                        title="Re-runs Grad-CAM++ and redraws the overlay. The grade is not recomputed.">
-                  {explaining === "cam" ? "Redrawing…" : "Redraw overlay"}
-                </button>
-                <button className="btn btn-ghost" onClick={() => redraw({ ccem: true })}
-                        disabled={Boolean(explaining)}>
-                  {explaining === "ccem"
-                    ? "Computing… (a few minutes)"
-                    : available.includes("ccem") ? "Recompute CCEM" : "Compute CCEM"}
+                <button className="btn btn-ghost" onClick={redraw} disabled={Boolean(explaining)} title="Re-runs Grad-CAM and redraws the overlay. The grade is not recomputed.">
+                  {explaining ? "Redrawing…" : "Redraw overlay"}
                 </button>
               </div>
             </div>
