@@ -299,7 +299,7 @@ export default function Cases() {
                     <td><StatusCell c={c} /></td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       {c.status === "REVIEWED" ? (
-                        <span className="muted" style={{ fontSize: 12 }} title="Reviewed cases are retained as clinical records">
+                        <span className="muted" style={{ fontSize: 12 }}>
                           Retained
                         </span>
                       ) : (
