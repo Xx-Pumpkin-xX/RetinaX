@@ -146,8 +146,7 @@ export default function Cases() {
   }
 
   async function removeCase(c) {
-    if (c.status === "REVIEWED") return;
-    if (!window.confirm("Delete this case? The photograph go with it. This cannot be undone.")) {
+    if (!window.confirm("Delete this case? This cannot be undone.")) {
       return;
     }
 
@@ -298,24 +297,18 @@ export default function Cases() {
                     </td>
                     <td><StatusCell c={c} /></td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                      {c.status === "REVIEWED" ? (
-                        <span className="muted" style={{ fontSize: 12 }}>
-                          Retained
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          className="linkish"
-                          style={{ color: "var(--danger)", fontSize: 12.5 }}
-                          disabled={deletingId === c.id}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            removeCase(c);
-                          }}
-                        >
-                          {deletingId === c.id ? "Removing…" : "Remove"}
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        className="linkish"
+                        style={{ color: "var(--danger)", fontSize: 12.5 }}
+                        disabled={deletingId === c.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeCase(c);
+                        }}
+                      >
+                        {deletingId === c.id ? "Removing…" : "Remove"}
+                      </button>
                     </td>
                   </tr>
                 ))

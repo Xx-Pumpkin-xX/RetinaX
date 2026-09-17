@@ -832,11 +832,7 @@ function submitChat(e) {
           {/* Deleting is deliberately last, quiet, and two-step. A reviewed
               case is refused by the server, so the control says so rather than
               offering something that will fail. */}
-          {reviewed ? (
-            <div className="muted" style={{ fontSize: 11.5, textAlign: "center" }}>
-              A reviewed case is a clinical record and is not deleted here.
-            </div>
-          ) : confirmDelete ? (
+          {confirmDelete ? (
             <div className="card stack" style={{ padding: 14, gap: 10 }}>
               <div style={{ fontSize: 13.5, lineHeight: 1.5 }}>
                 Delete this case? The photograph
