@@ -222,3 +222,88 @@ input[type="range"] { height: 20px; cursor: pointer; }
   cursor: pointer;
 }
 .linkish:hover { text-decoration: underline; }
+
+/* ---------------------------------------------------------------- modal ---
+   One backdrop, one card. Used only for deleting a case: the page should be
+   interrupted by an action that has no undo, not asked politely in a corner.
+--------------------------------------------------------------------------- */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+  background: rgba(27, 22, 19, 0.45);
+}
+
+.modal {
+  width: 100%; max-width: 440px; padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(27, 22, 19, 0.22);
+}
+
+.modal-title { margin: 0; font-size: 16px; font-weight: 600; }
+
+.modal-losing {
+  padding: 10px 12px; border-radius: 8px;
+  background: var(--danger-soft);
+  border: 1px solid var(--danger-line);
+  font-size: 12.5px; line-height: 1.7;
+}
+
+/* ---------------------------------------------------------- lesion bar ---
+   A fifth colour role, kept apart from the four above on purpose:
+
+     --lesion-line   lesion segmentation marks, and nothing else
+
+   It is NOT a severity colour and must never be drawn from --g0..--g4: a
+   lesion class has no severity of its own, and wearing a grade colour would
+   say it did. Violet was chosen because it survives on a red-orange fundus
+   and is separable from the cyan of --region-line under both deuteranopia
+   and tritanopia (measured, not guessed), so an attention region and a
+   lesion mark can never be mistaken for one another.
+
+   The chips carry STATE, not identity. Identity is the label printed on
+   them, which is why one colour is enough for six classes.
+--------------------------------------------------------------------------- */
+:root { --lesion-line: #c084fc; }
+
+.overlay.regions.lesion .region-line { stroke: var(--lesion-line); }
+
+.lesion-chip {
+  display: inline-flex; align-items: baseline; gap: 6px;
+  padding: 5px 10px; border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: "IBM Plex Mono", monospace; font-size: 12px;
+  cursor: pointer;
+}
+
+.lesion-chip .lesion-count { color: var(--muted); font-size: 11.5px; }
+
+.lesion-chip.found:hover { border-color: var(--lesion-line); }
+
+.lesion-chip.on {
+  background: var(--lesion-line);
+  border-color: var(--lesion-line);
+  color: #1b1613;
+}
+.lesion-chip.on .lesion-count { color: #1b1613; }
+
+/* Ran and marked nothing: quiet but solid, because it is a real measurement. */
+.lesion-chip.none {
+  background: var(--surface-2);
+  border-color: var(--line);
+  color: var(--muted);
+  cursor: default;
+}
+
+/* Not assessed: dashed, so the border itself looks unfinished. The dash is
+   the secondary encoding — this state never rests on colour alone. */
+.lesion-chip.not_assessed {
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--line-strong);
+  color: var(--muted);
+  cursor: not-allowed;
+}

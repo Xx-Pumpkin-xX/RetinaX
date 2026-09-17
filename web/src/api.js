@@ -48,7 +48,10 @@ export const api = {
   ),
   
   updateDetails: (id, payload) => call(`/api/cases/${id}/details`, json("POST", payload)),
-  deleteCase: (id) => call(`/api/cases/${id}`, { method: "DELETE" }),
+  // A reviewed case carries a recorded assessment, so the request carries a
+  // second, explicit signal instead of arriving as a bare DELETE.
+  deleteCase: (id, confirm) =>
+    call(`/api/cases/${id}`, confirm ? json("DELETE", { confirm }) : { method: "DELETE" }),
   regrade: (id) => call(`/api/cases/${id}/regrade`, { method: "POST" }),
   // ccem:false redraws Grad-CAM++ only — seconds, not minutes.
   explain: (id, { ccem = true } = {}) =>

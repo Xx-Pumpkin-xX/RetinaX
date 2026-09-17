@@ -130,6 +130,10 @@ export async function gradeImage(
 
     suppressionReason:
       out.suppression_reason ?? null,
+
+    // Null, not an empty block, when the service ran no lesion models. The
+    // difference is the whole point: "not looked for" is not "not there".
+    lesions: out.lesions ?? null,
   };
 }
 
@@ -160,6 +164,7 @@ export async function explain(
     imageWidth,
     imageHeight,
     suppressionReason,
+    lesions,
   } = await gradeImage(
     imageAbsPath,
     { ccem }
@@ -206,6 +211,7 @@ export async function explain(
     imageWidth,
     imageHeight,
     suppressionReason,
+    lesions,
   };
 }
 

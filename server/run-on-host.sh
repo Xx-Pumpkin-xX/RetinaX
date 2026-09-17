@@ -56,7 +56,7 @@ case "${1:-start}" in
     ;;
 
   start)
-    tmux has-session -t "$SESSION" 2>/dev/null && { echo "Already running."; "$0" status; exit 0; }
+    tmux has-session -t "$SESSION" 2>/dev/null && { echo "Already running."; bash "$0" status; exit 0; }
 
     for v in VAR_DIR WEB_ORIGIN JWT_SECRET AI_URL; do
       [ -n "${!v:-}" ] || { echo "!! $v is not set — write server/host.env, see the header." >&2; exit 1; }
@@ -122,7 +122,7 @@ case "${1:-start}" in
     for _ in $(seq 1 20); do
       sleep 2
       if curl -s -m 3 "http://localhost:$PORT/api/cases" | grep -q "Not signed in"; then
-        echo; echo "READY."; "$0" status; exit 0
+        echo; echo "READY."; bash "$0" status; exit 0
       fi
       printf .
     done

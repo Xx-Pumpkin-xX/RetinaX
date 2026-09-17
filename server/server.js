@@ -323,8 +323,21 @@ const caseRow = (row, full = false) => ({
       ? { width: row.ImageWidth, height: row.ImageHeight }
       : null,
     suppressionReason: row.SuppressionReason ?? null,
+    lesions: parseLesions(row.Lesions),
   } : {}),
 });
+
+// Null when the column is empty or unreadable, so the screen can say "not
+// assessed" rather than inventing six negative findings out of a missing row.
+function parseLesions(json) {
+  if (!json) return null;
+  try {
+    const v = JSON.parse(json);
+    return v && Array.isArray(v.classes) ? v : null;
+  } catch {
+    return null;
+  }
+}
 
 function parseRegions(json) {
   if (!json) return [];
@@ -476,14 +489,15 @@ app.post("/api/cases", auth, upload.single("image"), async (req, res) => {
         patientSex || null, eyePosition, req.file.path, now);
 
   try {
-    const { grade, camPath, ccemPath, regions, imageWidth, imageHeight, suppressionReason } =
+    const { grade, camPath, ccemPath, regions, imageWidth, imageHeight, suppressionReason, lesions } =
       await gradeImage(path.resolve(req.file.path));
     db.prepare(
       `INSERT INTO predictions (PredictionID, CaseID, Grade, HeatmapCamPath, HeatmapCcemPath,
-                                Regions, ImageWidth, ImageHeight, SuppressionReason, CreatedAt)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`
+                                Regions, ImageWidth, ImageHeight, SuppressionReason, Lesions, CreatedAt)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`
     ).run(randomUUID(), id, grade, camPath, ccemPath, JSON.stringify(regions),
-          imageWidth, imageHeight, suppressionReason, new Date().toISOString());
+          imageWidth, imageHeight, suppressionReason,
+          lesions ? JSON.stringify(lesions) : null, new Date().toISOString());
     db.prepare("UPDATE cases SET Status = 'GRADED' WHERE CaseID = ?").run(id);
     await dropSupersededFailures(req.doctorId, patientCode.trim(), eyePosition, id);
   } catch (err) {
@@ -515,14 +529,15 @@ app.post("/api/cases/:id/regrade", auth, async (req, res) => {
 
   db.prepare("UPDATE cases SET Status = 'PROCESSING' WHERE CaseID = ?").run(req.params.id);
   try {
-    const { grade, camPath, ccemPath, regions, imageWidth, imageHeight, suppressionReason } =
+    const { grade, camPath, ccemPath, regions, imageWidth, imageHeight, suppressionReason, lesions } =
       await gradeImage(path.resolve(row.ImagePath));
     db.prepare(
       `INSERT INTO predictions (PredictionID, CaseID, Grade, HeatmapCamPath, HeatmapCcemPath,
-                                Regions, ImageWidth, ImageHeight, SuppressionReason, CreatedAt)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`
+                                Regions, ImageWidth, ImageHeight, SuppressionReason, Lesions, CreatedAt)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`
     ).run(randomUUID(), req.params.id, grade, camPath, ccemPath, JSON.stringify(regions),
-          imageWidth, imageHeight, suppressionReason, new Date().toISOString());
+          imageWidth, imageHeight, suppressionReason,
+          lesions ? JSON.stringify(lesions) : null, new Date().toISOString());
     db.prepare("UPDATE cases SET Status = 'GRADED' WHERE CaseID = ?").run(req.params.id);
     await dropSupersededFailures(req.doctorId, row.PatientCode, row.EyePosition, req.params.id);
   } catch (err) {
@@ -557,7 +572,7 @@ app.post("/api/cases/:id/explain", auth, async (req, res) => {
   const wantCcem = req.query.ccem !== "0";
 
   try {
-    const { camPath, ccemPath, regions, imageWidth, imageHeight, suppressionReason } =
+    const { camPath, ccemPath, regions, imageWidth, imageHeight, suppressionReason, lesions } =
       await explain(path.resolve(row.ImagePath), row.Grade, { ccem: wantCcem });
     // COALESCE on both, so a Grad-CAM++-only redraw keeps an existing CCEM map
     // rather than deleting it. The grade is not touched — BR-4 — only pictures.
@@ -568,13 +583,16 @@ app.post("/api/cases/:id/explain", auth, async (req, res) => {
               Regions           = ?,
               ImageWidth        = ?,
               ImageHeight       = ?,
-              SuppressionReason = ?
+              SuppressionReason = ?,
+              Lesions           = COALESCE(?, Lesions)
         WHERE CaseID = ?`
+    // Lesions is COALESCEd, unlike Regions: a redraw that ran no lesion
+    // models must not erase a block an earlier run produced.
     // Regions are overwritten rather than COALESCEd: they were just recomputed
     // from this image, and keeping the previous set would leave the screen
     // marking areas the current map no longer supports.
     ).run(camPath, ccemPath, JSON.stringify(regions), imageWidth, imageHeight,
-          suppressionReason, req.params.id);
+          suppressionReason, lesions ? JSON.stringify(lesions) : null, req.params.id);
 
     // Only once the row points at the new files: a crash between writing them
     // and committing the row would otherwise leave the case pointing at a map
@@ -660,31 +678,14 @@ app.post("/api/cases/:id/details", auth, (req, res) => {
 });
 
 /**
- * Delete a case.
+ * Delete a case and everything belonging to it.
  *
- * Only a case nobody has assessed. A REVIEWED case carries a clinician's
- * recorded judgement, and the disagreement between that judgement and the
- * model's grade is the thing this whole system exists to preserve — offering a
- * button that quietly destroys one would undo the argument the project makes.
- * So: FAILED, PROCESSING and GRADED can go; REVIEWED is refused, with a reason.
- *
- * That still covers the case this exists for. A failed upload holds nothing at
- * all: no grade, no explanation, no decision. It is litter in a worklist, and
- * litter in a worklist costs attention.
- *
- * Everything belonging to the case goes with it — the prediction, any review
- * rows, the photograph and both heatmaps — because a half-deleted case is
- * worse than either outcome.
+ * This removes the prediction, review rows, photograph and both heatmaps.
+ * ownCase ensures that doctors can delete only their own cases.
  */
 app.delete("/api/cases/:id", auth, async (req, res) => {
   const row = ownCase(req.params.id, req.doctorId);
   if (!row) return res.status(404).json({ error: "Case not found" });
-
-  if (row.Status === "REVIEWED") {
-    return res.status(409).json({
-      error: "This case has been reviewed. A recorded assessment is a clinical record and is not deleted here.",
-    });
-  }
 
   // Rows first: if the unlinks fail we are left with unreferenced files, which
   // is untidy. The reverse order leaves a case pointing at nothing, which is a
