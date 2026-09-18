@@ -322,3 +322,15 @@ input[type="range"] { height: 20px; cursor: pointer; }
   border-style: dashed;
   border-color: var(--lesion-line);
 }
+
+/* The worklist's select box. Bigger than the browser default on purpose: it
+   sits at the end of a row that navigates on click, so it needs a hit target
+   a finger can find without opening the case by accident. */
+.pick {
+  width: 17px;
+  height: 17px;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.pick:disabled { cursor: default; opacity: 0.5; }
