@@ -66,7 +66,7 @@ export default function App() {
     return (
         <>
             <header className="header">
-                <Link to="/cases" className="brand" style={{ color: "var(--ink)" }}>
+                <Link to="/" className="brand" style={{ color: "var(--ink)" }}>
                     <Eye color="var(--accent)" />
                     <span>RetinaX<span style={{ color: "var(--accent)" }}>.ai</span></span>
                 </Link>
