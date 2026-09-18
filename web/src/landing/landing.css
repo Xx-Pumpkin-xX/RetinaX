@@ -342,6 +342,27 @@
   display: grid;
   place-items: center;
 }
+
+/* Logo navbar: không nền, dấu chấm cam */
+.rx-landing .navbar .brand,
+.rx-landing .navbar .brand:hover {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+}
+
+.rx-landing .navbar .brand-text {
+  color: #101d2d;
+}
+
+.rx-landing .navbar .brand-dot {
+  color: #f08a43;
+}
+/* Chữ trắng khi navbar còn trong suốt (trên nền hero tối) */
+.rx-landing .navbar-transparent .brand-text {
+  color: #fff;
+}
 .rx-landing .brand-mark-light {
   background: rgba(255, 255, 255, 0.16);
 }
