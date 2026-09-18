@@ -47,6 +47,11 @@ export const api = {
     })
   ),
   
+  // General application assistant. Non-streaming keeps the floating popup
+  // simple while reusing the existing authenticated /api/chat endpoint.
+  assistantChat: (messages) =>
+    call("/api/chat?stream=0", json("POST", { messages })),
+
   updateDetails: (id, payload) => call(`/api/cases/${id}/details`, json("POST", payload)),
   // A reviewed case carries a recorded assessment, so the request carries a
   // second, explicit signal instead of arriving as a bare DELETE.
