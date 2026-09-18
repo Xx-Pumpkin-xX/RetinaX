@@ -1,22 +1,30 @@
 /**
  * The six lesion classes, as a row of chips.
  *
- * THREE STATES, NOT TWO
+ * ALL SIX ARE HERE. THEY DO NOT ALL CARRY THE SAME WEIGHT.
  *
- * A chip says one of three things, and the third one is the reason this
- * component exists:
+ * A chip says one of three things:
  *
- *   found         a model ran and marked N areas. Clickable: it draws them.
- *   none          a model ran and marked nothing. A real, measured zero.
- *   not_assessed  no model ran, or its recall is not good enough to be
- *                 believed. NO CLAIM IS MADE EITHER WAY.
+ *   found         a model marked n areas. Clickable: it draws them.
+ *   none          a model ran, marked nothing, and is trusted to mean it.
+ *   not_assessed  no model, or a model whose silence proves nothing.
  *
- * Collapsing the third into the second is the failure mode worth guarding
- * against. "We did not look for neovascularisation" and "this eye has no
- * neovascularisation" are opposite statements, and NV is the finding that
- * decides whether someone is referred urgently. A screen that shows a
- * confident zero for a class the model cannot actually detect is worse than a
- * screen that shows nothing at all, because it is trusted.
+ * And separately, `reliability` says how far to trust it: `established` for a
+ * class measured above the recall bar on a large enough sample, `provisional`
+ * for one that is not.
+ *
+ * WHY POSITIVE AND NEGATIVE ARE TREATED DIFFERENTLY
+ *
+ * A provisional class may still point at something - that is a suggestion the
+ * clinician looks at and dismisses in a second, and hiding it would throw away
+ * information for no gain. What a provisional class may never do is report an
+ * absence, because an absence cannot be checked by looking. Neovascularisation
+ * decides urgent referral, and a model that finds one in four is wrong three
+ * times out of four when it stays silent.
+ *
+ * So: provisional classes may point, never reassure. The chip marks them with
+ * a "~" on the count and says the measured recall on hover, so the difference
+ * survives being screenshotted into a slide.
  *
  * WHY ONE CLASS DRAWS AT A TIME
  *
@@ -37,13 +45,32 @@ export const LESIONS = [
 const WHY = {
   grade_0:
     "No retinopathy was graded, so the lesion models were not run. This is not a finding that the eye is free of them.",
-  recall_not_credible:
-    "This class has not been shown to be detected reliably, so the screen makes no claim either way.",
   no_model: "No model has been trained for this class yet.",
+  low_recall:
+    "The model marked nothing, but it has not been shown to find this class reliably, so its silence is not evidence of absence.",
+  unmeasured:
+    "This model has not been measured on held-out data, so no claim is made either way.",
 };
+
+const pct = (v) => (v == null ? null : `${Math.round(v * 100)}%`);
+
+// An acronym stays an acronym: "20% of irma" reads like a typo.
+const inSentence = (s) => (s === s.toUpperCase() ? s : s.toLowerCase());
+
+function measured(l, name) {
+  if (l?.recall == null) return "";
+  const sample = l.gt_lesions ? ` (measured on ${l.gt_lesions} lesions)` : "";
+  // A percentage rather than "1 in N": rounding 0.64 to "1 in 2" understates a
+  // number the clinician is using to decide how much to trust a circle.
+  const marks = l.precision == null ? "" : ` About ${pct(l.precision)} of marks are confirmed.`;
+  return ` Found ${pct(l.recall)} of ${inSentence(name)} in validation${sample}.${marks}`;
+}
 
 export default function LesionBar({ lesions, active, onPick }) {
   const byKey = new Map((lesions?.classes || []).map((l) => [l.key, l]));
+  const anyProvisional = LESIONS.some(
+    ({ key }) => byKey.get(key)?.reliability === "provisional"
+  );
 
   return (
     <div className="stack" style={{ gap: 8, padding: "0 16px 14px" }}>
@@ -52,21 +79,30 @@ export default function LesionBar({ lesions, active, onPick }) {
           const l = byKey.get(key);
           const state = l?.state ?? "not_assessed";
           const why = l?.why ?? lesions?.reason ?? "no_model";
+          const tentative = l?.reliability && l.reliability !== "established";
           const on = active === key;
           const clickable = state === "found";
 
           const title =
             state === "found"
-              ? `${name} — ${l.count} area${l.count === 1 ? "" : "s"} marked. Click to show them.`
+              ? `${name} — ${l.count} area${l.count === 1 ? "" : "s"} marked.` +
+                (tentative
+                  ? ` Experimental: treat these as hints, not findings.${measured(l, name)}`
+                  : measured(l, name)) +
+                " Click to show them."
               : state === "none"
-                ? `${name} — the model ran on this image and marked none.`
-                : `${name} — not assessed. ${WHY[why] ?? ""}`;
+                ? `${name} — the model ran on this image and marked none.${measured(l, name)}`
+                : `${name} — not assessed. ${WHY[why] ?? ""}${measured(l, name)}`;
 
           return (
             <button
               key={key}
               type="button"
-              className={`lesion-chip ${state}${on ? " on" : ""}`}
+              className={
+                `lesion-chip ${state}` +
+                (tentative ? " tentative" : "") +
+                (on ? " on" : "")
+              }
               disabled={!clickable}
               aria-pressed={clickable ? on : undefined}
               title={title}
@@ -74,7 +110,11 @@ export default function LesionBar({ lesions, active, onPick }) {
             >
               <span className="lesion-key">{key}</span>
               <span className="lesion-count">
-                {state === "found" ? l.count : state === "none" ? "0" : "—"}
+                {state === "found"
+                  ? `${tentative ? "~" : ""}${l.count}`
+                  : state === "none"
+                    ? "0"
+                    : "—"}
               </span>
             </button>
           );
@@ -86,6 +126,12 @@ export default function LesionBar({ lesions, active, onPick }) {
       <div className="muted" style={{ fontSize: 12, lineHeight: 1.55 }}>
         <strong>n</strong> areas marked · <strong>0</strong> looked for, none found ·{" "}
         <strong>—</strong> not assessed, no claim made
+        {anyProvisional && (
+          <>
+            {" · "}
+            <strong>~n</strong> experimental, shown but not relied on
+          </>
+        )}
       </div>
     </div>
   );

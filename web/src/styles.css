@@ -307,3 +307,18 @@ input[type="range"] { height: 20px; cursor: pointer; }
   color: var(--muted);
   cursor: not-allowed;
 }
+
+/* An experimental class is SHOWN, not hidden: a mark the clinician can look at
+   and dismiss costs nothing, and hiding it throws information away. It is
+   dressed so it can never be read as a measured finding — a dashed edge here,
+   a "~" on the count in LesionBar — so the distinction survives both a
+   screenshot and a reader who cannot see colour. */
+.lesion-chip.found.tentative {
+  border-style: dashed;
+  border-color: var(--line-strong);
+}
+
+.lesion-chip.found.tentative.on {
+  border-style: dashed;
+  border-color: var(--lesion-line);
+}

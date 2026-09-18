@@ -349,6 +349,15 @@ function submitChat(e) {
               {lesionShown.count} area{lesionShown.count === 1 ? "" : "s"} marked as{" "}
               <strong>{lesionName}</strong> by a lesion model, which is a different model from the
               one that produced grade {c.grade}. The two can disagree; neither overrules your reading.
+              {lesionShown.reliability && lesionShown.reliability !== "established" && (
+                <>
+                  {" "}This class is <strong>experimental</strong>
+                  {lesionShown.recall != null && (
+                    <> — in validation it found {Math.round(lesionShown.recall * 100)}% of them,
+                      measured on {lesionShown.gt_lesions} lesions</>
+                  )}. Treat these marks as hints, not findings.
+                </>
+              )}
             </div>
           )}
 
