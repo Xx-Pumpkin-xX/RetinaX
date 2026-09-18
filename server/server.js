@@ -687,6 +687,17 @@ app.delete("/api/cases/:id", auth, async (req, res) => {
   const row = ownCase(req.params.id, req.doctorId);
   if (!row) return res.status(404).json({ error: "Case not found" });
 
+  // A reviewed case carries a clinical record, so it takes a second, explicit
+  // signal to remove one. 428 rather than 409: this is not "you may not", it
+  // is "say it again on purpose". The dialog in the browser already sends it,
+  // so the only request this stops is the one nobody meant to make - a stray
+  // click, a retry, a bare curl.
+  if (row.Status === "REVIEWED" && req.body?.confirm !== "DELETE-REVIEWED") {
+    return res.status(428).json({
+      error: "This case has a recorded assessment. Confirm the deletion to proceed.",
+    });
+  }
+
   // Rows first: if the unlinks fail we are left with unreferenced files, which
   // is untidy. The reverse order leaves a case pointing at nothing, which is a
   // bug the doctor sees.
@@ -698,7 +709,15 @@ app.delete("/api/cases/:id", auth, async (req, res) => {
   await removeFile(row.HeatmapCamPath);
   await removeFile(row.HeatmapCcemPath);
 
-  console.log(`[delete] case ${req.params.id.slice(0, 8)} (${row.Status}) by ${req.doctorId.slice(0, 8)}`);
+  // The grade and the assessment are logged BECAUSE they are about to stop
+  // existing anywhere else. If a case goes by accident, this line is what is
+  // left of it.
+  console.log(
+    `[delete] case ${req.params.id.slice(0, 8)} (${row.Status}) by ${req.doctorId.slice(0, 8)}` +
+    (row.Status === "REVIEWED"
+      ? ` grade=${row.Grade} agreement=${row.Agreement} corrected=${row.CorrectedGrade ?? "-"}`
+      : "")
+  );
   res.sendStatus(204);
 });
 
