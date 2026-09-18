@@ -64,6 +64,9 @@ tar czf "$TAR" \
   --exclude=ai/dgx.env \
   --exclude=ai/__pycache__ \
   --exclude='ai/*.pth' \
+  --exclude='*.pth' \
+  --exclude='*.pt' \
+  --exclude=ai/weights \
   --exclude='ai/*.npy' \
   --exclude='*.pyc' \
   ai

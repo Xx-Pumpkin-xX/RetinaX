@@ -77,15 +77,24 @@ def discover(root):
 
 
 def pairs(images_dir, masks_dir):
-    """[(image, mask)] matched on stem, because extensions differ per folder."""
-    by_stem = {}
-    for f in Path(images_dir).iterdir():
-        if f.suffix.lower() in IMG_EXT:
-            by_stem[f.stem] = f
+    """[(image, mask|None)] for EVERY image, matched on stem.
+
+    An image with no mask file in this class's folder is NOT missing data - it
+    is a negative. FGADR ships masks only for the images that have the lesion,
+    so for the rare classes the negatives live entirely outside the mask
+    folder: NV has 49 mask files out of 1842 images. Pairing only the 49 would
+    train on a set that is 100% positive, and the model learns that every
+    retina has neovascularisation - high recall, zero precision, and the most
+    dangerous way for this to fail.
+    """
+    masks = {}
+    for m in Path(masks_dir).iterdir():
+        if m.suffix.lower() in IMG_EXT:
+            masks[m.stem] = m
     out = []
-    for m in sorted(Path(masks_dir).iterdir()):
-        if m.suffix.lower() in IMG_EXT and m.stem in by_stem:
-            out.append((by_stem[m.stem], m))
+    for f in sorted(Path(images_dir).iterdir()):
+        if f.suffix.lower() in IMG_EXT:
+            out.append((f, masks.get(f.stem)))
     return out
 
 
@@ -100,7 +109,7 @@ class LesionSet:
     def __getitem__(self, i):
         ip, mp = self.items[i]
         img = cv2.cvtColor(cv2.imread(str(ip), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
-        msk = cv2.imread(str(mp), cv2.IMREAD_GRAYSCALE)
+        msk = cv2.imread(str(mp), cv2.IMREAD_GRAYSCALE) if mp is not None else None
         if msk is None:
             msk = np.zeros(img.shape[:2], np.uint8)
 
@@ -191,6 +200,25 @@ def train_one(key, items, args, outdir):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # A HARD CAP on this process's share of the GPU. The Spark is not ours and
+    # is serving the grading model at the same time; without this, a training
+    # step that wants more memory than is free takes it from the service, and
+    # the training job becomes the thing that broke the box. With it, training
+    # OOMs instead - and train_one's caller catches that, so one class dies
+    # and the service keeps answering.
+    #
+    # --gpu-gb is stated in gigabytes because that is what a person checking
+    # nvidia-smi actually reads; a fraction of 128 GB unified memory is easy to
+    # get wrong by a factor of ten in the wrong direction.
+    if device.type == "cuda":
+        total = torch.cuda.get_device_properties(0).total_memory
+        frac = (min(1.0, args.gpu_gb * (1024 ** 3) / total)
+                if args.gpu_gb > 0 else args.gpu_frac)
+        if 0 < frac < 1:
+            torch.cuda.set_per_process_memory_fraction(frac)
+            print(f"   gpu cap {frac * total / 1024 ** 3:.0f} GB "
+                  f"of {total / 1024 ** 3:.0f} GB ({frac:.0%})")
+
     # Positives first. An all-negative image is a real training signal - it is
     # what teaches the model not to fire on the optic disc - but FGADR has far
     # more of them than positives for the rare classes, and left unbalanced the
@@ -202,12 +230,15 @@ def train_one(key, items, args, outdir):
     if known:
         want = set(known["positive"])
         for ip, mp in items:
-            (pos if str(mp) in want else neg).append((ip, mp))
+            (pos if str(ip) in want else neg).append((ip, mp))
     else:
         for ip, mp in items:
+            if mp is None:                       # no mask file for this class
+                neg.append((ip, mp))
+                continue
             m = cv2.imread(str(mp), cv2.IMREAD_GRAYSCALE)
             (pos if m is not None and (m > 127).any() else neg).append((ip, mp))
-        cache.write_text(json.dumps({"positive": [str(mp) for _, mp in pos]}))
+        cache.write_text(json.dumps({"positive": [str(ip) for ip, _ in pos]}))
     random.Random(0).shuffle(neg)
     use = pos + neg[: len(pos)]
     random.Random(1).shuffle(use)
@@ -275,11 +306,15 @@ def main():
     ap.add_argument("--root", required=True, help="FGADR root (Seg-set's parent is fine)")
     ap.add_argument("--out", default="weights")
     ap.add_argument("--minutes", type=float, default=60, help="wall clock PER CLASS")
-    ap.add_argument("--size", type=int, default=768)
-    ap.add_argument("--batch", type=int, default=4)
-    ap.add_argument("--workers", type=int, default=6)
+    ap.add_argument("--size", type=int, default=512)
+    ap.add_argument("--batch", type=int, default=2)
+    ap.add_argument("--workers", type=int, default=3)
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--encoder", default="resnet34")
+    ap.add_argument("--gpu-gb", type=float, default=40, dest="gpu_gb",
+                    help="hard cap on this process's GPU memory, in GB (0 = use --gpu-frac)")
+    ap.add_argument("--gpu-frac", type=float, default=0.5, dest="gpu_frac",
+                    help="same cap as a fraction of total; only used when --gpu-gb is 0")
     ap.add_argument("--only", default="", help="comma-separated keys")
     ap.add_argument("--probe", action="store_true", help="print what is on disk and exit")
     ap.add_argument("--force", action="store_true", help="retrain classes that already have weights")
@@ -299,7 +334,9 @@ def main():
             continue
         img_d, msk_d = found[k]
         pr = pairs(img_d, msk_d)
-        print(f"  {k:<5} {len(pr):>5} image/mask pairs   {msk_d.name}")
+        withm = sum(1 for _, m in pr if m is not None)
+        note = "  <-- few positives, treat its numbers as provisional" if withm < 200 else ""
+        print(f"  {k:<5} {withm:>5} masks / {len(pr):>5} images   {msk_d.name}{note}")
     missing = [k for k in CLASSES if k not in found]
     if missing:
         print(f"\n  classes with no data: {', '.join(missing)} "
@@ -310,7 +347,10 @@ def main():
     outdir = Path(args.out)
     outdir.mkdir(parents=True, exist_ok=True)
     print(f"\ntraining {len(wanted)} classes x {args.minutes} min "
-          f"≈ {len(wanted) * args.minutes / 60:.1f} h\n")
+          f"≈ {len(wanted) * args.minutes / 60:.1f} h")
+    cap = f"{args.gpu_gb:g} GB" if args.gpu_gb > 0 else f"{args.gpu_frac:.0%}"
+    print(f"  size {args.size}  batch {args.batch}  workers {args.workers}  "
+          f"gpu cap {cap}\n")
 
     for k in wanted:
         if (outdir / f"{k}.pth").exists() and not args.force:
