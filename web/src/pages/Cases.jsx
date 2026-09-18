@@ -124,6 +124,13 @@ export default function Cases() {
   const patients = cases ? groupByPatient(visible) : [];
   const allPatients = cases ? groupByPatient(cases).length : 0;
 
+  // Paged by PATIENT, not by row, and a patient is never split across a
+  // page boundary: the whole point of grouping the two eyes is that the
+  // referral decision compares them, and comparing across a page turn is
+  // comparing from memory. So a page holds whole patients up to roughly
+  // PAGE_ROWS rows, which lands on 10 for the usual two-eyes-per-patient list.
+  const PAGE_ROWS = 10;
+
   const pages = [];
   {
     let bucket = [];
@@ -147,13 +154,6 @@ export default function Cases() {
   // Narrowing the list while sitting on page 4 would show an empty table and
   // look like the filter deleted everything.
   useEffect(() => { setPage(0); }, [q, status, referableOnly]);
-
-  // Paged by PATIENT, not by row, and a patient is never split across a
-  // page boundary: the whole point of grouping the two eyes is that the
-  // referral decision compares them, and comparing across a page turn is
-  // comparing from memory. So a page holds whole patients up to roughly
-  // PAGE_ROWS rows, which lands on 10 for the usual two-eyes-per-patient list.
-  const PAGE_ROWS = 10;
 
   const chosen = cases?.filter((c) => selected.has(c.id)) ?? [];
   const chosenReviewed = chosen.filter((c) => c.status === "REVIEWED");
