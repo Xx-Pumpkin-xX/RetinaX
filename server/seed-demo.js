@@ -112,18 +112,24 @@ export async function seedDemo({ force = false, doctorId = null } = {}) {
 
     try {
       const { grade, camPath, ccemPath, regions, imageWidth, imageHeight,
-              suppressionReason, source } = await gradeOrFallback(dest, file);
+              suppressionReason, lesions, source } = await gradeOrFallback(dest, file);
       if (source === "precomputed") usedFallback++;
       db.prepare(
         // The region columns belong here too. A seeded case that carries a
         // grade and a heatmap but no regions looks broken on the case screen -
         // the Regions control simply never appears - and nothing errors.
+        // Lesions belongs here for the same reason Regions does: a seeded case
+        // with a grade and a heatmap but no lesion block shows six "not
+        // assessed" chips, which is indistinguishable from the models being
+        // broken. NULL only when the service returned none - a precomputed
+        // fallback, or a build without the lesion wiring.
         `INSERT INTO predictions (PredictionID, CaseID, Grade, HeatmapCamPath, HeatmapCcemPath,
-                                  Regions, ImageWidth, ImageHeight, SuppressionReason, CreatedAt)
-         VALUES (?,?,?,?,?,?,?,?,?,?)`
+                                  Regions, ImageWidth, ImageHeight, SuppressionReason,
+                                  Lesions, CreatedAt)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`
       ).run(randomUUID(), id, grade, camPath, ccemPath,
             JSON.stringify(regions ?? []), imageWidth ?? null, imageHeight ?? null,
-            suppressionReason ?? null, created);
+            suppressionReason ?? null, lesions ? JSON.stringify(lesions) : null, created);
       db.prepare("UPDATE cases SET Status='GRADED' WHERE CaseID=?").run(id);
 
       // Leave the two newest awaiting review so there is something to demo,
