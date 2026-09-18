@@ -5,7 +5,7 @@ import Hero from "./Hero.jsx";
 import PartnerLogos from "./PartnerLogos.jsx";
 import HowItWorks from "./HowItWorks.jsx";
 import ResearchCards from "./ResearchCards.jsx";
-import FinalCTA from "./FinalCTA.jsx";
+
 
 /**
  * The public welcome page. Everything inside .rx-landing is styled by
@@ -18,10 +18,9 @@ export default function Landing() {
       <Navbar />
       <main>
         <Hero />
-        <PartnerLogos />
         <HowItWorks />
         <ResearchCards />
-        <FinalCTA />
+        <PartnerLogos />
       </main>
       <Footer />
     </div>
