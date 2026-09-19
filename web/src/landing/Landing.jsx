@@ -6,22 +6,23 @@ import PartnerLogos from "./PartnerLogos.jsx";
 import HowItWorks from "./HowItWorks.jsx";
 import ResearchCards from "./ResearchCards.jsx";
 
+
 /**
  * The public welcome page. Everything inside .rx-landing is styled by
  * landing.css, which is scoped to that class so the demo's palette cannot
  * reach the themed application behind the login.
  */
 export default function Landing() {
-    return (
-        <div className="rx-landing">
-            <Navbar />
-            <main>
-                <Hero />
-                <PartnerLogos />
-                <HowItWorks />
-                <ResearchCards />
-            </main>
-            <Footer />
-        </div>
-    );
+  return (
+    <div className="rx-landing">
+      <Navbar />
+      <main>
+        <Hero />
+        <HowItWorks />
+        <ResearchCards />
+        <PartnerLogos />
+      </main>
+      <Footer />
+    </div>
+  );
 }

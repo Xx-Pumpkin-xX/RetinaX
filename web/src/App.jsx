@@ -7,6 +7,7 @@ import Login from "./pages/Login.jsx";
 import Cases from "./pages/Cases.jsx";
 import NewCase from "./pages/NewCase.jsx";
 import CaseDetail from "./pages/CaseDetail.jsx";
+import ChatbotPopup from "./ChatbotPopup.jsx";
 
 export default function App() {
     const [me, setMe] = useState(undefined); // undefined = still checking
@@ -22,7 +23,12 @@ export default function App() {
     // If the session check later confirms they are already signed in (e.g. they
     // logged in from another tab), bounce them straight to their worklist.
     if (location.pathname === "/") {
-        return <Landing />;
+        return (
+            <>
+                <Landing />
+                {me && <ChatbotPopup />}
+            </>
+        );
     }
 
     if (me === undefined) {
@@ -60,7 +66,7 @@ export default function App() {
     return (
         <>
             <header className="header">
-                <Link to="/cases" className="brand" style={{ color: "var(--ink)" }}>
+                <Link to="/" className="brand" style={{ color: "var(--ink)" }}>
                     <Eye color="var(--accent)" />
                     <span>RetinaX<span style={{ color: "var(--accent)" }}>.ai</span></span>
                 </Link>
@@ -77,6 +83,7 @@ export default function App() {
                 <Route path="/cases/:id" element={<CaseDetail />} />
                 <Route path="*" element={<Navigate to="/cases" replace />} />
             </Routes>
+            <ChatbotPopup />
         </>
     );
 }

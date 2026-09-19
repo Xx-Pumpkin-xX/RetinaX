@@ -38,9 +38,13 @@ export default function Navbar() {
   return (
     <header className={`navbar ${scrolled ? "navbar-scrolled" : "navbar-transparent"}`}>
       <div className="container navbar-inner">
-        <Link to="/" className="brand" style={{ color: "var(--ink)" }} aria-label="RetinaX.ai home">
-          <Eye color="var(--accent)" />
-          <span>RetinaX<span style={{ color: "var(--accent)" }}>.ai</span></span>
+        <Link to="/" className="brand" aria-label="RetinX.ai home">
+          <span className="brand-mark" aria-hidden="true">
+            <Eye size={20} />
+          </span>
+          <span className="brand-text">
+            RetinX<span className="brand-dot">.</span>ai
+          </span>
         </Link>
 
         <nav className="nav-links" aria-label="Main navigation">

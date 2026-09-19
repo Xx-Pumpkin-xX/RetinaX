@@ -28,7 +28,7 @@ export default function Footer() {
           <h4>Status</h4>
           <span>Research prototype</span>
           <span>Decision support only</span>
-          <span>No patient names stored</span>
+          
         </div>
       </div>
       <div className="container footer-bottom">

@@ -79,9 +79,14 @@ export default function Cases() {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("ALL");
   const [referableOnly, setReferableOnly] = useState(false);
-  const [clearing, setClearing] = useState(false);
   const [clearError, setClearError] = useState(null);
-  const [deletingId, setDeletingId] = useState(null);
+  // Selection lives as ids, not rows: the worklist re-fetches every few
+  // seconds, so anything holding row objects would be stale by the next tick.
+  const [selected, setSelected] = useState(() => new Set());
+  const [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [regrading, setRegrading] = useState(null);   // null | {done, total}
+  const [page, setPage] = useState(0);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -119,47 +124,117 @@ export default function Cases() {
   const patients = cases ? groupByPatient(visible) : [];
   const allPatients = cases ? groupByPatient(cases).length : 0;
 
+  // Paged by PATIENT, not by row, and a patient is never split across a
+  // page boundary: the whole point of grouping the two eyes is that the
+  // referral decision compares them, and comparing across a page turn is
+  // comparing from memory. So a page holds whole patients up to roughly
+  // PAGE_ROWS rows, which lands on 10 for the usual two-eyes-per-patient list.
+  const PAGE_ROWS = 10;
+
+  const pages = [];
+  {
+    let bucket = [];
+    let rows = 0;
+    for (const p of patients) {
+      if (rows > 0 && rows + p.rows.length > PAGE_ROWS) {
+        pages.push(bucket);
+        bucket = [];
+        rows = 0;
+      }
+      bucket.push(p);
+      rows += p.rows.length;
+    }
+    if (bucket.length) pages.push(bucket);
+  }
+  const pageIndex = Math.min(page, Math.max(0, pages.length - 1));
+  const shown = pages[pageIndex] ?? [];
+
   const clear = () => { setQ(""); setStatus("ALL"); setReferableOnly(false); };
 
-  const failed = cases?.filter((c) => c.status === "FAILED") ?? [];
+  // Narrowing the list while sitting on page 4 would show an empty table and
+  // look like the filter deleted everything.
+  useEffect(() => { setPage(0); }, [q, status, referableOnly]);
+
+  const chosen = cases?.filter((c) => selected.has(c.id)) ?? [];
+  const chosenReviewed = chosen.filter((c) => c.status === "REVIEWED");
+  const chosenFailed = chosen.filter((c) => c.status === "FAILED");
+
+  const toggle = (id) =>
+    setSelected((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   /**
-   * Delete every failed case at once.
+   * Re-grade the ticked cases whose grading failed.
    *
-   * One request per case rather than a bulk endpoint: each deletion is then
-   * authorised and logged individually, and a failure part-way through leaves
-   * the rest deleted rather than rolling back work the doctor asked for. There
-   * are never many — a handful of failed uploads, not thousands.
+   * ONE AT A TIME, deliberately. Every re-grade is a full pass on the GPU that
+   * the model service also needs for live uploads; firing five at once does
+   * not make them finish sooner, it makes all five slow enough to time out and
+   * takes the service down with them. Sequential also means the counter is
+   * true - "3 of 5" is a fact, not an estimate.
+   *
+   * The API refuses to re-grade anything that is not FAILED, so only those are
+   * sent. Nothing here can overwrite a grade a doctor has already seen.
    */
-  async function clearFailed() {
-    setClearing(true);
+  async function regradeSelected() {
     setClearError(null);
-    const results = await Promise.allSettled(failed.map((c) => api.deleteCase(c.id)));
-    const stuck = results.filter((r) => r.status === "rejected").length;
-    if (stuck) setClearError(`${stuck} of ${failed.length} could not be removed.`);
+    setRegrading({ done: 0, total: chosenFailed.length });
+
+    let stuck = 0;
+    for (let i = 0; i < chosenFailed.length; i++) {
+      try {
+        await api.regrade(chosenFailed[i].id);
+      } catch {
+        stuck++;
+      }
+      setRegrading({ done: i + 1, total: chosenFailed.length });
+    }
+    if (stuck) setClearError(`${stuck} of ${chosenFailed.length} could not be re-graded.`);
+
+    setSelected(new Set());
     try {
       setCases(await api.cases());
     } catch (e) {
       setError(e.message);
     }
-    setClearing(false);
+    setRegrading(null);
   }
 
-  async function removeCase(c) {
-    if (!window.confirm("Delete this case? This cannot be undone.")) {
-      return;
-    }
-
-    setDeletingId(c.id);
+  /**
+   * Delete whatever is ticked.
+   *
+   * This replaced two separate controls: a "remove every failed case" button
+   * that decided for you which cases were litter, and a per-row Remove that
+   * could only ever take one. Ticking says exactly what goes, and the same
+   * dialog covers one case and twelve.
+   *
+   * One request per case rather than a bulk endpoint: each deletion is then
+   * authorised and logged individually, and a failure part-way through leaves
+   * the rest deleted rather than rolling back work the doctor asked for.
+   */
+  async function deleteSelected() {
+    setConfirmDelete(false);
+    setDeleting(true);
     setClearError(null);
+
+    const results = await Promise.allSettled(
+      // A reviewed case needs the second, explicit signal the API asks for.
+      chosen.map((c) =>
+        api.deleteCase(c.id, c.status === "REVIEWED" ? "DELETE-REVIEWED" : undefined))
+    );
+    const stuck = results.filter((r) => r.status === "rejected").length;
+    if (stuck) setClearError(`${stuck} of ${chosen.length} could not be removed.`);
+
+    setSelected(new Set());
     try {
-      await api.deleteCase(c.id);
-      setCases((current) => current?.filter((item) => item.id !== c.id) ?? current);
+      setCases(await api.cases());
     } catch (e) {
-      setClearError(e.message);
-    } finally {
-      setDeletingId(null);
+      setError(e.message);
     }
+    setDeleting(false);
   }
 
   return (
@@ -220,18 +295,90 @@ export default function Cases() {
               Clear
             </button>
           )}
+        </div>
+      )}
 
-          {/* A failed case holds no grade, no explanation and no assessment —
-              it is litter, and litter in a worklist costs attention. */}
-          {failed.length > 0 && (
-            <button type="button" className="btn btn-ghost" onClick={clearFailed}
-                    disabled={clearing} title="Deletes every case whose grading failed"
-                    style={{ height: 38, padding: "0 12px", fontSize: 13, color: "var(--danger)" }}>
-              {clearing
-                ? "Removing…"
-                : `Remove ${failed.length} failed`}
+      {selected.size > 0 && (
+        <div className="card row" style={{ padding: "10px 14px", gap: 12, alignItems: "center" }}>
+          <span style={{ fontSize: 13.5 }}>
+            <strong>{selected.size}</strong> selected
+          </span>
+          <button type="button" className="btn btn-ghost"
+                  onClick={() => setSelected(new Set())} disabled={deleting}
+                  style={{ height: 34, padding: "0 12px", fontSize: 13 }}>
+            Clear selection
+          </button>
+          <span className="grow" />
+
+          {chosenFailed.length > 0 && (
+            <button type="button" className="btn btn-ghost"
+                    disabled={deleting || Boolean(regrading)}
+                    onClick={regradeSelected}
+                    title="Runs the model again on the cases whose grading failed. Minutes, not seconds."
+                    style={{ height: 34, padding: "0 14px", fontSize: 13 }}>
+              {regrading
+                ? `Re-grading ${regrading.done} of ${regrading.total}…`
+                : `Re-grade ${chosenFailed.length} failed`}
             </button>
           )}
+
+          <button type="button" className="btn" disabled={deleting || Boolean(regrading)}
+                  onClick={() => { setClearError(null); setConfirmDelete(true); }}
+                  style={{ height: 34, padding: "0 14px", fontSize: 13,
+                           background: "var(--danger)", borderColor: "var(--danger)" }}>
+            {deleting ? "Removing…" : `Delete ${selected.size}`}
+          </button>
+        </div>
+      )}
+
+      {/* The dialog names every case it is about to remove. "12 selected" is a
+          number, and a number is not something you can check. A reviewed case
+          among them is called out separately, because that is the one where
+          something irreplaceable goes. */}
+      {confirmDelete && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="del-many"
+             onMouseDown={(e) => { if (e.target === e.currentTarget && !deleting) setConfirmDelete(false); }}>
+          <div className="modal stack" style={{ gap: 12 }}>
+            <h3 id="del-many" className="modal-title">
+              Delete {chosen.length} case{chosen.length === 1 ? "" : "s"}?
+            </h3>
+            <div style={{ fontSize: 13.5, lineHeight: 1.55 }}>
+              The photograph{chosen.length === 1 ? "" : "s"} and the model's
+              grade{chosen.length === 1 ? "" : "s"} go with
+              {chosen.length === 1 ? " it" : " them"}. This cannot be undone.
+            </div>
+
+            {chosenReviewed.length > 0 && (
+              <div className="modal-losing">
+                {chosenReviewed.length} of these {chosenReviewed.length === 1 ? "is" : "are"} already
+                reviewed. Deleting {chosenReviewed.length === 1 ? "it" : "them"} also removes the
+                recorded assessment and every earlier amendment of it.
+              </div>
+            )}
+
+            <div className="card stack" style={{ padding: 10, gap: 4, maxHeight: 220, overflowY: "auto" }}>
+              {chosen.map((c) => (
+                <div key={c.id} className="row mono" style={{ fontSize: 12.5, gap: 8 }}>
+                  <span>{c.patientCode} · {c.eye}</span>
+                  <span className="grow" />
+                  <span className="muted">
+                    {c.status === "REVIEWED" ? "reviewed" :
+                     c.status === "FAILED" ? "grading failed" :
+                     c.grade == null ? "no grade" : `grade ${c.grade}`}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <div className="row" style={{ gap: 10 }}>
+              <button className="btn grow" onClick={deleteSelected} disabled={deleting}
+                      style={{ background: "var(--danger)", borderColor: "var(--danger)" }}>
+                {deleting ? "Removing…" : "Delete permanently"}
+              </button>
+              <button className="btn btn-ghost" onClick={() => setConfirmDelete(false)}
+                      disabled={deleting}>Cancel</button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -264,13 +411,13 @@ export default function Cases() {
         <div className="card" style={{ overflow: "hidden" }}>
           <table className="table">
             <thead>
-              <tr><th>Patient</th><th>Eye</th><th>Captured</th><th>AI grade</th><th>Status</th><th aria-label="Actions" /></tr>
+              <tr><th>Patient</th><th>Eye</th><th>Captured</th><th>AI grade</th><th>Status</th><th aria-label="Select" /></tr>
             </thead>
             <tbody>
-              {patients.map((p) =>
+              {shown.map((p) =>
                 p.rows.map((c, i) => (
                   <tr key={c.id} onClick={() => navigate(`/cases/${c.id}`)}
-                      style={i === 0 && p !== patients[0] ? { borderTop: "2px solid var(--line-strong)" } : undefined}>
+                      style={i === 0 && p !== shown[0] ? { borderTop: "2px solid var(--line-strong)" } : undefined}>
                     <td className="mono">
                       {i === 0 ? (
                         <span className="row" style={{ gap: 9 }}>
@@ -296,25 +443,44 @@ export default function Cases() {
                       )}
                     </td>
                     <td><StatusCell c={c} /></td>
-                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                      <button
-                        type="button"
-                        className="linkish"
-                        style={{ color: "var(--danger)", fontSize: 12.5 }}
-                        disabled={deletingId === c.id}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          removeCase(c);
-                        }}
-                      >
-                        {deletingId === c.id ? "Removing…" : "Remove"}
-                      </button>
+                    {/* stopPropagation on the cell, not just the input: the
+                        whole row navigates, and a click that lands on the
+                        padding beside the box would open the case instead of
+                        ticking it. */}
+                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}
+                        onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        className="pick"
+                        checked={selected.has(c.id)}
+                        disabled={deleting}
+                        onChange={() => toggle(c.id)}
+                        aria-label={`Select ${c.patientCode} ${c.eye}`}
+                      />
                     </td>
                   </tr>
                 ))
               )}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {pages.length > 1 && (
+        <div className="row" style={{ gap: 10, alignItems: "center", justifyContent: "center" }}>
+          <button type="button" className="btn btn-ghost" disabled={pageIndex === 0}
+                  onClick={() => setPage(pageIndex - 1)}
+                  style={{ height: 34, padding: "0 12px", fontSize: 13 }}>
+            ← Previous
+          </button>
+          <span className="muted mono" style={{ fontSize: 12.5 }}>
+            {pageIndex + 1} / {pages.length}
+          </span>
+          <button type="button" className="btn btn-ghost" disabled={pageIndex >= pages.length - 1}
+                  onClick={() => setPage(pageIndex + 1)}
+                  style={{ height: 34, padding: "0 12px", fontSize: 13 }}>
+            Next →
+          </button>
         </div>
       )}
 

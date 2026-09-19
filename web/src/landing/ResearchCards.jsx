@@ -1,44 +1,10 @@
-import { useEffect, useRef, useState } from "react";
-
 const STATS = [
-  { label: "APTOS Validation QWK", value: 0.93, decimals: 2, note: "Quadratic weighted kappa" },
-  { label: "Kaggle Private QWK", value: 0.92, decimals: 2, note: "Held-out private split" },
-  { label: "Proposed XAI Method", text: "CCEM", note: "Consensus-Calibrated Explanation Map" },
+  { label: "APTOS Validation QWK", value: "0.93", note: "Quadratic weighted kappa" },
+  { label: "Kaggle Private QWK", value: "0.92", note: "Held-out private split" },
+  { label: "Proposed XAI Method", value: "CCEM", note: "Consensus-Calibrated Explanation Map" },
 ];
 
-function CountUp({ target, decimals, start }) {
-  const [display, setDisplay] = useState(0);
-
-  useEffect(() => {
-    if (!start) { setDisplay(0); return; }
-    const duration = 1600;
-    const begin = performance.now();
-    let frame = 0;
-    const tick = (now) => {
-      const progress = Math.min((now - begin) / duration, 1);
-      setDisplay(target * (1 - Math.pow(1 - progress, 3)));
-      if (progress < 1) frame = requestAnimationFrame(tick);
-    };
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, [start, target]);
-
-  return <>{display.toFixed(decimals)}</>;
-}
-
 export default function ResearchCards() {
-  const [visible, setVisible] = useState(false);
-  const ref = useRef(null);
-
-  useEffect(() => {
-    const node = ref.current;
-    if (!node) return;
-    const observer = new IntersectionObserver(
-      (entries) => setVisible(entries[0].isIntersecting), { threshold: 0.35 });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
-
   return (
     <section className="section section-alt">
       <div className="container">
@@ -50,14 +16,11 @@ export default function ResearchCards() {
           setting and are not clinical validation results.
         </p>
 
-        <div className="stat-row" ref={ref}>
+        <div className="stat-row">
           {STATS.map((stat) => (
             <div className="card stat-card" key={stat.label}>
               <span className="stat-label">{stat.label}</span>
-              <strong className="stat-value">
-                {stat.text ? stat.text
-                  : <CountUp target={stat.value} decimals={stat.decimals} start={visible} />}
-              </strong>
+              <strong className="stat-value">{stat.value}</strong>
               <span className="stat-note">{stat.note}</span>
             </div>
           ))}

@@ -416,7 +416,8 @@ function ownCase(id, doctorId) {
       // The region columns are here and not in the worklist query above,
       // because only the case screen draws them and they are polygons.
       `SELECT c.*, p.Grade, p.HeatmapCamPath, p.HeatmapCcemPath,
-              p.Regions, p.ImageWidth, p.ImageHeight, p.SuppressionReason
+              p.Regions, p.ImageWidth, p.ImageHeight, p.SuppressionReason,
+              p.Lesions
          FROM cases c
          LEFT JOIN predictions p ON p.CaseID = c.CaseID
         WHERE c.CaseID = ? AND c.DoctorID = ?`
