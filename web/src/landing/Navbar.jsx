@@ -56,7 +56,7 @@ export default function Navbar() {
             </button>
           ))}
           {me ? (
-            <Link to="/cases" className="btn btn-primary btn-sm nav-cta">My cases</Link>
+            <Link to="/cases/new" className="btn btn-primary btn-sm nav-cta">My cases</Link>
           ) : (
             <Link to="/login" className="btn btn-primary btn-sm nav-cta">Sign in</Link>
           )}
