@@ -342,6 +342,27 @@
   display: grid;
   place-items: center;
 }
+
+/* Logo navbar: không nền, dấu chấm cam */
+.rx-landing .navbar .brand,
+.rx-landing .navbar .brand:hover {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+}
+
+.rx-landing .navbar .brand-text {
+  color: #101d2d;
+}
+
+.rx-landing .navbar .brand-dot {
+  color: #f08a43;
+}
+/* Chữ trắng khi navbar còn trong suốt (trên nền hero tối) */
+.rx-landing .navbar-transparent .brand-text {
+  color: #fff;
+}
 .rx-landing .brand-mark-light {
   background: rgba(255, 255, 255, 0.16);
 }
@@ -942,12 +963,9 @@
   place-items: center;
   color: var(--retina);
   margin-bottom: 22px;
-  transition: transform 0.25s ease, border-color 0.25s ease;
+  
 }
-.rx-landing .flow-step:hover .flow-ring {
-  transform: translateY(-4px);
-  border-color: var(--retina);
-}
+
 .rx-landing .flow-num {
   position: absolute;
   top: -6px;
@@ -1592,14 +1610,7 @@
 .rx-landing .carousel-visual .mock, .rx-landing .carousel-copy .h3, .rx-landing .carousel-copy p, .rx-landing .carousel-copy .feature-index {
   animation: fadeSlide 0.55s cubic-bezier(0.22, 1, 0.36, 1);
 }
-@keyframes dashFlow {
-  to {
-    stroke-dashoffset: -180;
-  }
-}
-.rx-landing .flow-curve path {
-  animation: dashFlow 6s linear infinite;
-}
+
 .rx-landing .view-tabs {
   display: flex;
   flex-wrap: wrap;
