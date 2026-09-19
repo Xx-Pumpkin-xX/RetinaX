@@ -6,9 +6,13 @@ export default function Footer() {
     <footer className="footer">
       <div className="container footer-inner">
         <div className="footer-brand">
-          <Link to="/" className="brand brand-light">
-            <span className="brand-mark brand-mark-light"><Eye size={18} strokeWidth={2.2} /></span>
-            <span className="brand-text">RetinaX<span className="brand-dot">.</span>ai</span>
+          <Link to="/" className="brand" aria-label="RetinX.ai home">
+            <span className="brand-mark" aria-hidden="true">
+              <Eye size={22} />
+            </span>
+            <span className="brand-text">
+              RetinaX<span className="brand-dot">.</span>ai
+            </span>
           </Link>
           <p className="footer-note">
             Research prototype for explainable diabetic-retinopathy grading.
@@ -28,7 +32,6 @@ export default function Footer() {
           <h4>Status</h4>
           <span>Research prototype</span>
           <span>Decision support only</span>
-          
         </div>
       </div>
       <div className="container footer-bottom">

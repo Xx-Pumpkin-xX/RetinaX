@@ -43,7 +43,7 @@ export default function Navbar() {
             <Eye size={20} />
           </span>
           <span className="brand-text">
-            RetinX<span className="brand-dot">.</span>ai
+            RetinaX<span className="brand-dot">.</span>ai
           </span>
         </Link>
 

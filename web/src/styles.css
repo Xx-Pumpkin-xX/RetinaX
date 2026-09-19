@@ -520,3 +520,32 @@ textarea.input.chatbot-input {
     height: min(620px, calc(100vh - 80px));
   }
 }
+
+/* Logo RetinX.ai */
+.logo-mark {
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  background: linear-gradient(135deg, #1f2a44 0%, #e2793a 100%);
+  color: #fff;
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.logo-mark-lg {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+}
+.logo-text {
+  color: var(--ink, #1c2540);
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.logo-text-lg {
+  font-size: 28px;
+}
+.logo-dot {
+  color: #e8742f;
+}
