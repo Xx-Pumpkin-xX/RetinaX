@@ -588,23 +588,11 @@
   align-items: center;
   gap: 8px;
 }
-.rx-landing a.partner {
-  display: block;
-  text-decoration: none;
-  transition: opacity 120ms ease, transform 120ms ease;
-}
-.rx-landing a.partner:hover,
-.rx-landing a.partner:focus-visible {
-  opacity: 1;
-  transform: translateY(-1px);
-}
 .rx-landing .partner-logo {
   height: 88px;
   width: 210px;
   max-width: none;
   object-fit: contain;
-  opacity: 0.5;
-  filter: grayscale(100%);
   transition: opacity 0.25s ease, filter 0.25s ease;
 }
 .rx-landing .partner-aelab .partner-logo {
@@ -618,10 +606,6 @@
   max-width: 250px;
   transform: scale(1.35);
   transform-origin: center;
-}
-.rx-landing .partner:hover .partner-logo {
-  opacity: 1;
-  filter: grayscale(0%);
 }
 .rx-landing .partner-name {
   font-size: 12px;
