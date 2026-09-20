@@ -33,28 +33,42 @@ from fastapi import FastAPI, File, Query, UploadFile
 from fastapi.responses import JSONResponse
 from PIL import Image
 
-
 @asynccontextmanager
 async def lifespan(app):
-    """Load the model when the service starts, not on the first upload.
+    """Load models when the service starts."""
 
-    Two reasons. A wiring mistake should appear in the startup log while you
-    are watching it, rather than as a failed upload minutes later. And loading
-    a 249 MB B7 checkpoint takes real time — paying that on the first request
-    would make the demo's first case look broken.
-
-    Never fatal: if the research model cannot be loaded the stand-in serves
-    instead, so the API always has something to talk to.
-    """
     global _model, _thresholds
+
     _thresholds = load_thresholds()
+
+    # Load CLIP fundus gate once at startup.
+    try:
+        import fundus_gate
+        fundus_gate.load()
+    except Exception as e:
+        print(
+            f"[startup] fundus gate load failed: "
+            f"{type(e).__name__}: {e}",
+            flush=True,
+        )
+
+    # Load DR grading model.
     try:
         _model = load_model()
     except Exception as e:
-        print(f"[startup] model load failed: {type(e).__name__}: {e}")
+        print(
+            f"[startup] model load failed: "
+            f"{type(e).__name__}: {e}"
+        )
         _model = None
-    print(f"[startup] ready — {'REAL MODEL' if _model else 'STAND-IN'} | "
-          f"thresholds {_thresholds}", flush=True)
+
+    print(
+        f"[startup] ready — "
+        f"{'REAL MODEL' if _model else 'STAND-IN'} | "
+        f"thresholds {_thresholds}",
+        flush=True,
+    )
+
     yield
 
 
@@ -285,43 +299,139 @@ def health():
         "ok": True,
         "model_loaded": _model is not None,
         "ccem_on_upload": CCEM_ON_UPLOAD,
-        # So "did the new renderer actually deploy" is answerable from outside
-        # the process. Stored heatmaps are rendered files and do not repaint
-        # themselves, which makes a stale service and a stale picture look
-        # identical from the browser.
         "heatmap_style": HEATMAP_STYLE,
         "overlay_placed_on_crop": True,
     }
+
     try:
         import dr_adapter
         out.update(dr_adapter.health())
     except Exception:
         out["image_size"] = IMAGE_SIZE
-    # Report the thresholds actually in use. The adapter keeps its own copy and
-    # never loads it when the stand-in is running, which would show null here
-    # while the service was happily grading with the fallback values.
+
+    try:
+        import fundus_gate
+        out.update(fundus_gate.health())
+    except Exception as e:
+        out["fundus_gate_loaded"] = False
+        out["fundus_gate_error"] = str(e)
+
     out["thresholds"] = _thresholds
     out["note"] = None if _model else "stand-in model — grades are not real"
+
     return out
-
-
+    
 @app.post("/infer")
 async def infer(
     file: UploadFile = File(...),
-    ccem: bool = Query(default=None, description="override CCEM_ON_UPLOAD for this request"),
+    ccem: bool = Query(
+        default=None,
+        description="override CCEM_ON_UPLOAD for this request"
+    ),
 ):
     want_ccem = CCEM_ON_UPLOAD if ccem is None else ccem
-    img = Image.open(io.BytesIO(await file.read())).convert("RGB")
+
+    # ----------------------------------------------------------
+    # 1. Make sure the uploaded file is actually an image
+    # ----------------------------------------------------------
     try:
-        grade, cam, ccem_map, box, base, conf = predict(img, want_ccem)
+        img = Image.open(
+            io.BytesIO(await file.read())
+        ).convert("RGB")
+
+    except Exception:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": "INVALID_IMAGE",
+                "message": (
+                    "The uploaded file could not be read as an image."
+                ),
+            },
+        )
+
+    # ----------------------------------------------------------
+    # 2. CLIP fundus validation gate
+    # ----------------------------------------------------------
+    try:
+        import fundus_gate
+        gate = fundus_gate.classify(img)
+
     except Exception as e:
-        # Say what actually broke in the response body. A bare "Internal Server
-        # Error" means going to find the server's terminal and scrolling, which
-        # is slow while the wiring is still being shaken out. This is a research
-        # service on a private network, not a public API — the traceback is not
-        # leaking anything an attacker could use.
         tb = traceback.format_exc()
         print(tb, flush=True)
+
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "FUNDUS_GATE_FAILED",
+                "message": (
+                    "The fundus-image validation service failed."
+                ),
+            },
+        )
+
+    print(
+        "[fundus-gate]",
+        file.filename,
+        gate,
+        flush=True,
+    )
+
+    # ----------------------------------------------------------
+    # 3. Reject obvious non-fundus images
+    # ----------------------------------------------------------
+    if gate["status"] == "not_fundus":
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": "INVALID_FUNDUS_IMAGE",
+                "message": (
+                    "This image does not appear to be a retinal "
+                    "fundus photograph. Please upload a fundus image."
+                ),
+                "fundus_score": round(
+                    gate["fundus_score"],
+                    4,
+                ),
+                "fundus_status": gate["status"],
+            },
+        )
+
+    # ----------------------------------------------------------
+    # 4. Reject uncertain images for now
+    # ----------------------------------------------------------
+    if gate["status"] == "uncertain":
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": "UNCERTAIN_FUNDUS_IMAGE",
+                "message": (
+                    "We could not confidently identify this image "
+                    "as a retinal fundus photograph. "
+                    "Please verify the image or choose another one."
+                ),
+                "fundus_score": round(
+                    gate["fundus_score"],
+                    4,
+                ),
+                "fundus_status": gate["status"],
+            },
+        )
+
+    # ----------------------------------------------------------
+    # 5. Only valid fundus images reach the DR grader
+    # ----------------------------------------------------------
+    try:
+        grade, cam, ccem_map, box, base, conf = predict(
+            img,
+            want_ccem,
+        )
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(tb, flush=True)
+
         return JSONResponse(
             status_code=500,
             content={
@@ -330,29 +440,60 @@ async def infer(
                 "traceback": tb.splitlines()[-12:],
             },
         )
-    # A min-max normalised map always fills 0..1, so it paints a confident red
-    # blob whether or not the model found anything. Deciding NOT to draw one is
-    # therefore part of drawing it honestly — see heatmap_regions.py.
-    reason, fov_frac = suppress_reason(cam, int(grade), base)
+
+    reason, fov_frac = suppress_reason(
+        cam,
+        int(grade),
+        base,
+    )
+
     show_cam = reason is None
 
     return {
         "grade": int(grade),
-        "heatmap_cam_png_base64": cam_to_png(cam, img.size, box, base) if show_cam else None,
-        "heatmap_ccem_png_base64": cam_to_png(ccem_map, img.size, box, base) if show_cam else None,
-        # Padded boxes around the strongest areas, in the ORIGINAL photograph's
-        # coordinates. Attention regions, not detected lesions: this CAM comes
-        # from a grading model, not a lesion detector.
-        "regions": cam_regions(cam, img.size, box, base) if show_cam else [],
-        # The frame those coordinates are in. Without it the browser cannot
-        # place a box: it knows how big the photograph is on screen, not how
-        # big it is in pixels, and the two are never the same number.
-        "image_size": [int(img.size[0]), int(img.size[1])],
+
+        "heatmap_cam_png_base64": (
+            cam_to_png(
+                cam,
+                img.size,
+                box,
+                base,
+            )
+            if show_cam else None
+        ),
+
+        "heatmap_ccem_png_base64": (
+            cam_to_png(
+                ccem_map,
+                img.size,
+                box,
+                base,
+            )
+            if show_cam else None
+        ),
+
+        "regions": (
+            cam_regions(
+                cam,
+                img.size,
+                box,
+                base,
+            )
+            if show_cam else []
+        ),
+
+        "image_size": [
+            int(img.size[0]),
+            int(img.size[1]),
+        ],
+
         "heatmap_suppressed": not show_cam,
         "suppression_reason": reason,
-        "fov_heat_fraction": round(float(fov_frac), 3),
-        # How firm the grade is. A band and the numbers behind it — never a
-        # percentage, because a percentage would imply a calibration curve
-        # nobody has measured. See confidence.py.
+        "fov_heat_fraction": round(
+            float(fov_frac),
+            3,
+        ),
+
         "confidence": conf,
     }
+

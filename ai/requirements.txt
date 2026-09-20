@@ -12,6 +12,7 @@ uvicorn[standard]
 python-multipart
 pillow
 numpy
+transformers
 
 # --- only needed when serving the real ProjectDR2026 model (DR_REPO set) -----
 # The research code imports these; the stand-in does not.
