@@ -33,15 +33,26 @@ from fastapi import FastAPI, File, Query, UploadFile
 from fastapi.responses import JSONResponse
 from PIL import Image
 
+# start implement chatbot here
+import requests
+from pydantic import BaseModel, Field 
+
 @asynccontextmanager
 async def lifespan(app):
-    """Load models when the service starts."""
+    """Load the model when the service starts, not on the first upload.
 
+    Two reasons. A wiring mistake should appear in the startup log while you
+    are watching it, rather than as a failed upload minutes later. And loading
+    a 249 MB B7 checkpoint takes real time — paying that on the first request
+    would make the demo's first case look broken.
+
+    Never fatal: if the research model cannot be loaded the stand-in serves
+    instead, so the API always has something to talk to.
+    """
     global _model, _thresholds
-
     _thresholds = load_thresholds()
 
-    # Load CLIP fundus gate once at startup.
+    # Load CLIP input-validity gate once at service startup.
     try:
         import fundus_gate
         fundus_gate.load()
@@ -52,28 +63,43 @@ async def lifespan(app):
             flush=True,
         )
 
-    # Load DR grading model.
     try:
         _model = load_model()
     except Exception as e:
-        print(
-            f"[startup] model load failed: "
-            f"{type(e).__name__}: {e}"
-        )
+        print(f"[startup] model load failed: {type(e).__name__}: {e}")
         _model = None
-
-    print(
-        f"[startup] ready — "
-        f"{'REAL MODEL' if _model else 'STAND-IN'} | "
-        f"thresholds {_thresholds}",
-        flush=True,
-    )
-
+    print(f"[startup] ready — {'REAL MODEL' if _model else 'STAND-IN'} | "
+          f"thresholds {_thresholds}", flush=True)
     yield
 
 
 app = FastAPI(title="RetinaX grading service", lifespan=lifespan)
 
+
+# ------------------------------------------------------------------ chatbot
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    model_grade: int              
+    model_label: str
+
+    # doc assessment: "agree" or "disagree" 
+    agreement: str
+
+    corrected_grade: int | None = None
+    corrected_label: str | None = None
+
+    # optional note ưhen agreeing 
+    doctor_note: str = ""
+
+    message: str
+
+    history: list[ChatMessage] = Field(default_factory=list)
+    
 # --------------------------------------------------------------------- config
 # B7 was trained at 600; the research runs use --img_size 600.
 IMAGE_SIZE = int(os.environ.get("IMAGE_SIZE", 600))
@@ -130,10 +156,6 @@ def load_model():
 
 def score_to_grade(score: float) -> int:
     return int(sum(1 for t in _thresholds if score >= t))
-
-
-
-
 
 def _standin(img: Image.Image):
     """Runs before the weights are wired, so the app works end to end.
@@ -204,6 +226,45 @@ def predict(img: Image.Image, want_ccem: bool):
 # PNG is rendered at full strength and the blend happens there.
 from heatmap_regions import suppress_reason, cam_regions  # noqa: E402
 from confidence import grade_confidence  # noqa: E402
+
+# ------------------------------------------------------------------- lesions
+# Six specialists, one per lesion class, loaded once. Everything here is
+# wrapped: this service's job is to grade, and a lesion checkpoint that fails
+# to load must not stop it doing that. On any failure LESIONS stays None, the
+# response simply has no `lesions` field, and the web app shows six
+# "not assessed" chips - which is the honest thing for it to show anyway.
+LESION_WEIGHTS = os.environ.get("LESION_WEIGHTS", "/home/hungntt/lesion-weights")
+try:
+    from lesion_infer import LesionModels  # noqa: E402
+    from lesion_regions import lesion_block, load_metrics  # noqa: E402
+
+    LESIONS = LesionModels(LESION_WEIGHTS)
+    LESION_METRICS = load_metrics(LESION_WEIGHTS)
+    print(f"[lesions] {LESIONS}", flush=True)
+    print(f"[lesions] metrics: "
+          f"{ {k: v['tier'] for k, v in LESION_METRICS.items()} }", flush=True)
+except Exception as e:
+    LESIONS, LESION_METRICS = None, {}
+    print(f"[lesions] disabled: {type(e).__name__}: {e}", flush=True)
+
+
+def lesion_input(img, box):
+    """The crop the lesion models were trained to see.
+
+    NOT the `rgb` that predict() returns: that one has had CLAHE applied for
+    the grading model, and these six were trained on raw FGADR frames. Feeding
+    a CLAHE'd image would not raise anything - it would return a plausible map
+    that marks the wrong places, which is the worst kind of wrong.
+
+    The crop itself is kept, because FGADR's Original_Images are already tight
+    on the retina. Passing the whole photograph instead would hand the models a
+    black border and a retina at half the scale they trained on.
+    """
+    full = np.asarray(img.convert("RGB"))
+    if box is None:
+        return full
+    y0, y1, x0, x1 = box
+    return full[y0:y1, x0:x1]
 
 
 HEATMAP_STYLE = os.environ.get("HEATMAP_STYLE", "jet").lower()
@@ -299,10 +360,19 @@ def health():
         "ok": True,
         "model_loaded": _model is not None,
         "ccem_on_upload": CCEM_ON_UPLOAD,
+        # So "did the new renderer actually deploy" is answerable from outside
+        # the process. Stored heatmaps are rendered files and do not repaint
+        # themselves, which makes a stale service and a stale picture look
+        # identical from the browser.
         "heatmap_style": HEATMAP_STYLE,
         "overlay_placed_on_crop": True,
+        # Which lesion specialists are in memory, and which of them the
+        # measurements on disk allow to report an absence. "did the lesion
+        # wiring actually deploy" should be answerable with one curl.
+        "lesions_loaded": LESIONS.loaded if LESIONS else [],
+        "lesions_established": sorted(k for k, v in LESION_METRICS.items()
+                                      if v.get("tier") == "established"),
     }
-
     try:
         import dr_adapter
         out.update(dr_adapter.health())
@@ -315,59 +385,267 @@ def health():
     except Exception as e:
         out["fundus_gate_loaded"] = False
         out["fundus_gate_error"] = str(e)
-
+    # Report the thresholds actually in use. The adapter keeps its own copy and
+    # never loads it when the stand-in is running, which would show null here
+    # while the service was happily grading with the fallback values.
     out["thresholds"] = _thresholds
     out["note"] = None if _model else "stand-in model — grades are not real"
-
     return out
-    
+
+# /health -> /chat -> /infer
+
+@app.post("/chat")
+def chat(req: ChatRequest):
+    """
+    Local contestable-AI conversation.
+
+    The DR grade comes from the RetinaX grading model.
+    Qwen only helps the clinician discuss and contest that result.
+    """
+
+    system_prompt = """
+You are RetinaX, an educational visual explanation assistant for
+diabetic retinopathy grading.
+
+This is a classroom demonstration of contestable AI.
+
+The RetinaX grading model has already produced:
+- a diabetic-retinopathy grade;
+- an explanation heatmap showing the retinal regions that most influenced
+  the model output.
+
+Your job is NOT to give a general textbook explanation of the grade.
+
+Instead, explain the prediction as if you are reviewing the model's
+fundus-image explanation together with its heatmap.
+
+IMPORTANT RESPONSE BEHAVIOR:
+
+1. Focus on the highlighted retinal regions that influenced the model.
+
+2. Explain what retinal appearance in those highlighted regions may have
+   contributed to the model prediction.
+
+3. Relate the highlighted regions to possible visual findings such as:
+   - microaneurysm-like small red dots,
+   - hemorrhage-like dark red regions,
+   - bright exudate-like deposits,
+   - cotton-wool-like pale regions,
+   - vascular abnormalities,
+   - or other abnormal retinal appearance.
+
+4. Do NOT spend most of the answer defining the DR grade in general.
+
+5. Use case-specific language:
+   "The model appears to focus on..."
+   "The highlighted region may contain..."
+   "This area may have increased the model's severity score because..."
+
+6. Do NOT claim absolute certainty.
+   Use words such as:
+   "appears",
+   "may",
+   "could be compatible with",
+   "suggests".
+
+7. A heatmap represents model attention or attribution.
+   It does NOT prove that a highlighted area is a true clinical lesion.
+
+8. Never say:
+   "I cannot see the image",
+   "I do not have access to the fundus image",
+   "I would need to see the heatmap",
+   or similar statements.
+
+9. If the model prediction is Severe NPDR, do NOT describe
+   neovascularization as evidence for Severe NPDR.
+   Neovascularization is associated with proliferative DR.
+
+10. Keep the explanation focused on THIS case rather than providing
+    a long general explanation of diabetic retinopathy.
+
+When the user asks why the model made the prediction, use this format:
+
+MODEL PREDICTION
+Briefly state the model grade.
+
+MODEL FOCUS
+Describe 1-3 retinal regions that appear important according to the
+model explanation.
+
+VISUAL INTERPRETATION
+Describe what abnormalities may be present in those highlighted regions.
+
+WHY THEY MAY MATTER
+Explain how those visual patterns could have increased or decreased
+the model's predicted severity.
+
+CAUTION
+State briefly that the heatmap indicates model attention and is not
+a confirmed clinical lesion annotation.
+"""
+
+    # ------------------------------------------------ assessment context
+
+    agreement = req.agreement.upper().strip()
+
+    if agreement == "AGREE":
+        assessment_context = f"""
+CLINICIAN ASSESSMENT:
+
+The clinician AGREES with the RetinaX prediction.
+
+RetinaX prediction:
+Grade {req.model_grade} — {req.model_label}
+
+Clinician note:
+{req.doctor_note or "No additional note provided."}
+
+The clinician may ask you to explain the prediction,
+question the model explanation, or add clinical observations.
+"""
+
+    elif agreement == "DISAGREE":
+        assessment_context = f"""
+CLINICIAN ASSESSMENT:
+
+The clinician DISAGREES with the RetinaX prediction.
+
+RetinaX prediction:
+Grade {req.model_grade} — {req.model_label}
+
+Clinician corrected grade:
+Grade {req.corrected_grade} — {req.corrected_label}
+
+Clinician reason:
+{req.doctor_note or "No reason provided."}
+
+Help the clinician examine and contest the difference between
+the model prediction and their assessment.
+"""
+
+    else:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "agreement must be AGREE or DISAGREE"
+            },
+        )
+
+    # ------------------------------------------------ messages for Qwen
+
+    messages = [
+        {
+            "role": "system",
+            "content": system_prompt,
+        },
+        {
+            "role": "user",
+            "content": assessment_context,
+        },
+    ]
+
+    # Only keep recent conversation history.
+    for item in req.history[-8:]:
+        role = "assistant" if item.role == "assistant" else "user"
+
+        messages.append({
+            "role": role,
+            "content": item.content[:3000],
+        })
+
+    # Current doctor's message.
+    messages.append({
+        "role": "user",
+        "content": req.message[:4000],
+    })
+
+    # ------------------------------------------------ call local Ollama
+
+    try:
+        response = requests.post(
+            "http://127.0.0.1:11434/api/chat",
+            json={
+                "model": "qwen3.5:4b",
+                "messages": messages,
+
+                # We don't need the model's hidden reasoning for this demo.
+                "think": False,
+
+                # One complete JSON response instead of streaming chunks.
+                "stream": False,
+
+                # Keep Qwen loaded briefly during a conversation.
+                "keep_alive": "5m",
+
+                "options": {
+                    "temperature": 0.2,
+                },
+            },
+            timeout=60,
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        reply = data.get("message", {}).get("content", "").strip()
+
+        if not reply:
+            raise RuntimeError("Ollama returned an empty response")
+
+        return {
+            "reply": reply
+        }
+
+    except Exception as exc:
+        print(
+            f"[chat] Ollama error: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error": "Local contestable AI could not answer"
+            },
+        )
+
+# contest end here
+
 @app.post("/infer")
 async def infer(
     file: UploadFile = File(...),
-    ccem: bool = Query(
-        default=None,
-        description="override CCEM_ON_UPLOAD for this request"
-    ),
+    ccem: bool = Query(default=None, description="override CCEM_ON_UPLOAD for this request"),
 ):
     want_ccem = CCEM_ON_UPLOAD if ccem is None else ccem
 
-    # ----------------------------------------------------------
-    # 1. Make sure the uploaded file is actually an image
-    # ----------------------------------------------------------
     try:
         img = Image.open(
             io.BytesIO(await file.read())
         ).convert("RGB")
-
     except Exception:
         return JSONResponse(
             status_code=422,
             content={
                 "error": "INVALID_IMAGE",
-                "message": (
-                    "The uploaded file could not be read as an image."
-                ),
+                "message": "The uploaded file could not be read as an image.",
             },
         )
 
-    # ----------------------------------------------------------
-    # 2. CLIP fundus validation gate
-    # ----------------------------------------------------------
+    # Input-validity gate. The DR model should never be asked to assign
+    # a disease grade to an arbitrary photograph.
     try:
         import fundus_gate
         gate = fundus_gate.classify(img)
-
     except Exception as e:
         tb = traceback.format_exc()
         print(tb, flush=True)
-
         return JSONResponse(
             status_code=500,
             content={
                 "error": "FUNDUS_GATE_FAILED",
-                "message": (
-                    "The fundus-image validation service failed."
-                ),
+                "message": "The fundus-image validation service failed.",
             },
         )
 
@@ -378,9 +656,6 @@ async def infer(
         flush=True,
     )
 
-    # ----------------------------------------------------------
-    # 3. Reject obvious non-fundus images
-    # ----------------------------------------------------------
     if gate["status"] == "not_fundus":
         return JSONResponse(
             status_code=422,
@@ -390,17 +665,11 @@ async def infer(
                     "This image does not appear to be a retinal "
                     "fundus photograph. Please upload a fundus image."
                 ),
-                "fundus_score": round(
-                    gate["fundus_score"],
-                    4,
-                ),
+                "fundus_score": round(gate["fundus_score"], 4),
                 "fundus_status": gate["status"],
             },
         )
 
-    # ----------------------------------------------------------
-    # 4. Reject uncertain images for now
-    # ----------------------------------------------------------
     if gate["status"] == "uncertain":
         return JSONResponse(
             status_code=422,
@@ -408,30 +677,24 @@ async def infer(
                 "error": "UNCERTAIN_FUNDUS_IMAGE",
                 "message": (
                     "We could not confidently identify this image "
-                    "as a retinal fundus photograph. "
-                    "Please verify the image or choose another one."
+                    "as a retinal fundus photograph. Please verify "
+                    "the image or choose another one."
                 ),
-                "fundus_score": round(
-                    gate["fundus_score"],
-                    4,
-                ),
+                "fundus_score": round(gate["fundus_score"], 4),
                 "fundus_status": gate["status"],
             },
         )
 
-    # ----------------------------------------------------------
-    # 5. Only valid fundus images reach the DR grader
-    # ----------------------------------------------------------
     try:
-        grade, cam, ccem_map, box, base, conf = predict(
-            img,
-            want_ccem,
-        )
-
+        grade, cam, ccem_map, box, base, conf = predict(img, want_ccem)
     except Exception as e:
+        # Say what actually broke in the response body. A bare "Internal Server
+        # Error" means going to find the server's terminal and scrolling, which
+        # is slow while the wiring is still being shaken out. This is a research
+        # service on a private network, not a public API — the traceback is not
+        # leaking anything an attacker could use.
         tb = traceback.format_exc()
         print(tb, flush=True)
-
         return JSONResponse(
             status_code=500,
             content={
@@ -440,60 +703,46 @@ async def infer(
                 "traceback": tb.splitlines()[-12:],
             },
         )
-
-    reason, fov_frac = suppress_reason(
-        cam,
-        int(grade),
-        base,
-    )
-
+    # A min-max normalised map always fills 0..1, so it paints a confident red
+    # blob whether or not the model found anything. Deciding NOT to draw one is
+    # therefore part of drawing it honestly — see heatmap_regions.py.
+    reason, fov_frac = suppress_reason(cam, int(grade), base)
     show_cam = reason is None
+
+    # Independent of show_cam: the lesion models are separate networks, so a
+    # suppressed attention map says nothing about whether they found anything.
+    # Grade 0 is the one short-circuit - no retinopathy was graded, so nothing
+    # is run and every class reports "not assessed" rather than a zero.
+    lesions = None
+    if LESIONS is not None:
+        try:
+            masks = {} if int(grade) == 0 else LESIONS.predict(lesion_input(img, box))
+            lesions = lesion_block(masks, img.size, box,
+                                   grade=int(grade), metrics=LESION_METRICS)
+        except Exception as e:
+            print(f"[lesions] failed on this image: {type(e).__name__}: {e}", flush=True)
 
     return {
         "grade": int(grade),
-
-        "heatmap_cam_png_base64": (
-            cam_to_png(
-                cam,
-                img.size,
-                box,
-                base,
-            )
-            if show_cam else None
-        ),
-
-        "heatmap_ccem_png_base64": (
-            cam_to_png(
-                ccem_map,
-                img.size,
-                box,
-                base,
-            )
-            if show_cam else None
-        ),
-
-        "regions": (
-            cam_regions(
-                cam,
-                img.size,
-                box,
-                base,
-            )
-            if show_cam else []
-        ),
-
-        "image_size": [
-            int(img.size[0]),
-            int(img.size[1]),
-        ],
-
+        "heatmap_cam_png_base64": cam_to_png(cam, img.size, box, base) if show_cam else None,
+        "heatmap_ccem_png_base64": cam_to_png(ccem_map, img.size, box, base) if show_cam else None,
+        # Padded boxes around the strongest areas, in the ORIGINAL photograph's
+        # coordinates. Attention regions, not detected lesions: this CAM comes
+        # from a grading model, not a lesion detector.
+        "regions": cam_regions(cam, img.size, box, base) if show_cam else [],
+        # Six lesion classes from six separate segmentation models - a
+        # different claim from `regions`, which is where the GRADING model
+        # looked. null when no lesion model is loaded.
+        "lesions": lesions,
+        # The frame those coordinates are in. Without it the browser cannot
+        # place a box: it knows how big the photograph is on screen, not how
+        # big it is in pixels, and the two are never the same number.
+        "image_size": [int(img.size[0]), int(img.size[1])],
         "heatmap_suppressed": not show_cam,
         "suppression_reason": reason,
-        "fov_heat_fraction": round(
-            float(fov_frac),
-            3,
-        ),
-
+        "fov_heat_fraction": round(float(fov_frac), 3),
+        # How firm the grade is. A band and the numbers behind it — never a
+        # percentage, because a percentage would imply a calibration curve
+        # nobody has measured. See confidence.py.
         "confidence": conf,
     }
-

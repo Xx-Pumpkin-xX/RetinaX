@@ -70,6 +70,7 @@ case "${1:-start}" in
     [ "$NODE_MM" -ge 2205 ] || { echo "!! Node $(node -v 2>/dev/null || echo 'is missing') — need >= 22.5" >&2; exit 1; }
 
     [ -d "$HERE/node_modules" ] || { echo "installing dependencies…"; (cd "$HERE" && npm ci); }
+    [ -f "$VAR_DIR/.vault-open" ] || { echo "!! VAR_DIR is not the mounted vault - refusing to start." >&2; exit 1; }
     mkdir -p "$VAR_DIR"
 
     : > "$TLOG"
