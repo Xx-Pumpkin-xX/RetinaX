@@ -82,12 +82,8 @@ export async function gradeImage(
 
   err.status = res.status;
   err.code = out.error || "AI_SERVICE_ERROR";
-
-  err.fundusScore =
-    out.fundus_score ?? null;
-
-  err.fundusStatus =
-    out.fundus_status ?? null;
+  err.fundusScore = out.fundus_score ?? null;
+  err.fundusStatus = out.fundus_status ?? null;
 
   throw err;
 }
