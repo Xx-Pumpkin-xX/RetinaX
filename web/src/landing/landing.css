@@ -1754,3 +1754,33 @@
 .rx-landing .lesion-count {
   color: var(--muted);
 }
+
+/* Logo footer: cùng logo với navbar, chữ trắng trên nền tối */
+.rx-landing .footer .brand,
+.rx-landing .footer .brand:hover {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  text-decoration: none;
+}
+
+.rx-landing .footer .brand-mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #1f2a44 0%, #e2793a 100%);
+  color: #fff;
+  display: grid;
+  place-items: center;
+}
+
+.rx-landing .footer .brand-text {
+  color: #fff;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.rx-landing .footer .brand-dot {
+  color: #f08a43;
+}

@@ -34,9 +34,13 @@ export default function App() {
     if (me === undefined) {
         return (
             <div className="stack" style={{ height: "100vh", alignItems: "center", justifyContent: "center", gap: 14 }}>
-                <div className="row" style={{ gap: 11 }}>
-                    <Eye size={30} color="var(--accent)" />
-                    <span style={{ fontSize: 26, fontWeight: 600 }}>RetinaX<span style={{ color: "var(--accent)" }}>.ai</span></span>
+                <div className="row" style={{ gap: 12 }}>
+                    <span className="logo-mark logo-mark-lg" aria-hidden="true">
+                        <Eye size={26} />
+                    </span>
+                    <span className="logo-text logo-text-lg">
+                             RetinaX<span className="logo-dot">.</span>ai
+                    </span>
                 </div>
                 <div className="muted">Preparing your worklist…</div>
             </div>
@@ -66,9 +70,13 @@ export default function App() {
     return (
         <>
             <header className="header">
-                <Link to="/" className="brand" style={{ color: "var(--ink)" }}>
-                    <Eye color="var(--accent)" />
-                    <span>RetinaX<span style={{ color: "var(--accent)" }}>.ai</span></span>
+                <Link to="/" className="brand" aria-label="RetinX.ai home">
+                    <span className="logo-mark" aria-hidden="true">
+                            <Eye size={20} />
+                    </span>
+                    <span className="logo-text">
+                            RetinaX<span className="logo-dot">.</span>ai
+                    </span>
                 </Link>
                 <div className="row" style={{ gap: 14 }}>
                     <span style={{ fontSize: 13.5 }}>{me.fullName}</span>
