@@ -441,6 +441,17 @@ async function removeFile(p) {
   }
 }
 
+function isInvalidImageError(err) {
+  return (
+    err?.status === 422 &&
+    [
+      "INVALID_IMAGE",
+      "INVALID_FUNDUS_IMAGE",
+      "UNCERTAIN_FUNDUS_IMAGE",
+    ].includes(err?.code)
+  );
+}
+
 /**
  * Drop earlier failed attempts at the same eye once one of them works.
  *
@@ -501,10 +512,36 @@ app.post("/api/cases", auth, upload.single("image"), async (req, res) => {
           lesions ? JSON.stringify(lesions) : null, new Date().toISOString());
     db.prepare("UPDATE cases SET Status = 'GRADED' WHERE CaseID = ?").run(id);
     await dropSupersededFailures(req.doctorId, patientCode.trim(), eyePosition, id);
+  
   } catch (err) {
     console.error("grading failed:", err.message);
-    db.prepare("UPDATE cases SET Status = 'FAILED' WHERE CaseID = ?").run(id);
-    return res.status(502).json({ id, error: "The grading service did not answer" });
+
+    // Invalid image/fundus is a user input problem,
+    // not a failure of the grading service.
+    if (isInvalidImageError(err)) {
+      db.prepare(
+        "DELETE FROM cases WHERE CaseID = ?"
+      ).run(id);
+
+      await removeFile(req.file.path);
+
+      return res.status(422).json({
+        error: err.message,
+        code: err.code,
+        fundusScore: err.fundusScore ?? null,
+        fundusStatus: err.fundusStatus ?? null,
+      });
+    }
+
+    // Real AI/service failure.
+    db.prepare(
+      "UPDATE cases SET Status = 'FAILED' WHERE CaseID = ?"
+    ).run(id);
+
+    return res.status(502).json({
+      id,
+      error: "The grading service did not answer",
+    });
   }
 
   res.status(201).json(caseRow(ownCase(id, req.doctorId), true));
@@ -541,12 +578,30 @@ app.post("/api/cases/:id/regrade", auth, async (req, res) => {
           lesions ? JSON.stringify(lesions) : null, new Date().toISOString());
     db.prepare("UPDATE cases SET Status = 'GRADED' WHERE CaseID = ?").run(req.params.id);
     await dropSupersededFailures(req.doctorId, row.PatientCode, row.EyePosition, req.params.id);
+    
   } catch (err) {
     console.error("re-grading failed:", err.message);
-    db.prepare("UPDATE cases SET Status = 'FAILED' WHERE CaseID = ?").run(req.params.id);
-    return res.status(502).json({ error: "The grading service still did not answer" });
-  }
 
+    // This is an existing case, so do NOT delete the case or image.
+    // Restore it to FAILED so the state is internally consistent.
+    db.prepare(
+      "UPDATE cases SET Status = 'FAILED' WHERE CaseID = ?"
+    ).run(req.params.id);
+
+    if (isInvalidImageError(err)) {
+      return res.status(422).json({
+        error: err.message,
+        code: err.code,
+        fundusScore: err.fundusScore ?? null,
+        fundusStatus: err.fundusStatus ?? null,
+      });
+    }
+
+    return res.status(502).json({
+      error: "The grading service still did not answer",
+    });
+  }
+  
   const updated = ownCase(req.params.id, req.doctorId);
   res.json({ ...caseRow(updated, true), reviews: reviewHistory(req.params.id) });
 });
