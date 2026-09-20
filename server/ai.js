@@ -71,11 +71,26 @@ export async function gradeImage(
     }
   );
 
-  if (!res.ok) {
-    throw new Error(`AI service ${res.status}`);
-  }
+  const out = await res.json().catch(() => ({}));
 
-  const out = await res.json();
+  if (!res.ok) {
+    const err = new Error(
+      out.message ||
+      out.error ||
+      `AI service ${res.status}`
+    );
+
+  err.status = res.status;
+  err.code = out.error || "AI_SERVICE_ERROR";
+
+  err.fundusScore =
+    out.fundus_score ?? null;
+
+  err.fundusStatus =
+    out.fundus_status ?? null;
+
+  throw err;
+}
 
   if (typeof out.grade !== "number") {
     throw new Error(
