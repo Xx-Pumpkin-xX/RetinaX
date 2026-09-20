@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
+import { useParams, Link, useNavigate, useLocation } from "react-router-dom"; // MỚI THÊM: useLocation
 import { api, GRADES, gradeVar } from "../api.js";
 import ApiImage from "../ApiImage.jsx";
 import RegionOverlay from "../RegionOverlay.jsx";
@@ -27,6 +27,7 @@ const SUPPRESSED = {
 export default function CaseDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation(); // MỚI THÊM
   const [c, setCase] = useState(null);
   const [error, setError] = useState(null);
 
@@ -50,6 +51,13 @@ export default function CaseDetail() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState(null);
   const [explainError, setExplainError] = useState(null);
+
+  // MỚI THÊM: chỉ có giá trị ngay sau khi upload cả 2 mắt cùng lúc từ NewCase.jsx,
+  // giúp dẫn bác sĩ xem lần lượt kết quả từng mắt thay vì rơi thẳng về worklist.
+  const resultQueue = location.state?.resultQueue ?? null;
+  const resultStep = location.state?.resultStep ?? 0;
+  const hasNextResult = resultQueue && resultStep < resultQueue.length - 1;
+  const nextResultId = hasNextResult ? resultQueue[resultStep + 1] : null;
 
   // Có thay đổi chưa lưu nếu đang mở form sửa thông tin bệnh nhân,
   // hoặc đang điền/sửa đánh giá (Agree/Disagree) mà chưa bấm Save.
@@ -229,6 +237,21 @@ export default function CaseDetail() {
         </span>
       </div>
 
+      {/* MỚI THÊM: thanh chuyển sang kết quả mắt tiếp theo, chỉ hiện khi vừa upload 2 mắt */}
+      {hasNextResult && (
+        <div className="card row" style={{ padding: 12, gap: 12, justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ fontSize: 13.5 }}>
+            Result {resultStep + 1} of {resultQueue.length} for this patient.
+          </span>
+          <button className="btn btn-ghost" type="button"
+                  onClick={() => navigate(`/cases/${nextResultId}`, {
+                    state: { resultQueue, resultStep: resultStep + 1 },
+                  })}>
+            Next eye's result →
+          </button>
+        </div>
+      )}
+
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 380px", gap: 18, alignItems: "start" }}>
 
         {/* ------------------------------------------------------- viewer */}
@@ -323,9 +346,6 @@ export default function CaseDetail() {
 
         {/* -------------------------------------------------------- panel */}
         <div className="stack" style={{ gap: 14 }}>
-          {/* Patient details are typed by a person, so a person can correct
-              them. The photograph, the grade and the assessment history are
-              not editable here — those are records, not data entry. */}
           {editing ? (
             <form className="card stack" style={{ padding: 16, gap: 12 }} onSubmit={saveDetails}>
               <div className="label">Correct patient details</div>
@@ -425,11 +445,6 @@ export default function CaseDetail() {
             the diagnosis of record.</div>
           </div>
 
-          {/* The review form appears only for a case the model has actually
-              graded. Agreeing with a grade that does not exist is not a
-              decision a doctor can make, so it must not be offered — the
-              server refuses it (BR-2), but a button that always fails is a
-              worse answer than no button. */}
           {processing ? (
             <div className="card stack" style={{ padding: 16, gap: 8 }}>
               <div className="label">Your assessment</div>
@@ -464,9 +479,6 @@ export default function CaseDetail() {
               </div>
               {c.reason && <div className="muted" style={{ fontSize: 13.5 }}>{c.reason}</div>}
 
-              {/* Amendments are kept, not overwritten. A doctor who mis-clicks
-                  must be able to correct it; a record that silently changed
-                  would defeat the point of storing the disagreement at all. */}
               {(c.reviews?.length ?? 0) > 1 && (
                 <details style={{ fontSize: 12.5 }}>
                   <summary className="muted" style={{ cursor: "pointer" }}>
@@ -609,10 +621,6 @@ export default function CaseDetail() {
             </div>
           )}
 
-          {/* Deleting is last and quiet, and it opens a dialog rather than
-              expanding in place: an action with no undo should interrupt the
-              page. A reviewed case asks for the patient code typed out, so a
-              recorded assessment cannot go on one stray click. */}
           <button type="button" className="linkish"
                   style={{ alignSelf: "center", fontSize: 12.5, color: "var(--danger)" }}
                   onClick={() => { setConfirmText(""); setDeleteError(null); setConfirmDelete(true); }}>
@@ -640,9 +648,6 @@ export default function CaseDetail() {
                       </div>
                       <div>· every earlier amendment of it</div>
                     </div>
-                    {/* The code is shown outside the label because .label is
-                        uppercased, and you cannot ask someone to copy a string
-                        exactly while showing them a different one. */}
                     <label className="label" htmlFor="del-code">
                       Confirm by typing the patient code
                     </label>

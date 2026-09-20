@@ -87,7 +87,17 @@ export default function NewCase() {
       setBusy(false);
       return;
     }
-    navigate(created.length === 1 ? `/cases/${created[0].id}` : "/cases");
+
+    // One eye uploaded → straight to its result. Two eyes → walk the doctor
+    // through each result in turn (see CaseDetail's "Next eye's result"),
+    // rather than dropping them on the worklist after the first one.
+    if (created.length === 1) {
+      navigate(`/cases/${created[0].id}`);
+    } else {
+      navigate(`/cases/${created[0].id}`, {
+        state: { resultQueue: created.map((c) => c.id), resultStep: 0 },
+      });
+    }
   }
 
   function goToCases(e) {
