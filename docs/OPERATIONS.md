@@ -20,22 +20,6 @@ after every reboot. `server/run-on-host.sh` refuses to start unless
 Not encrypted: database columns (the schema holds no patient names, only
 `PatientCode` and `BirthYear`).
 
-## Getting into prts-0
-
-Two ways. JupyterLab serves **HTTPS** — the scheme is not optional.
-
-    https://prts-0.taileb4cb1.ts.net:8888/lab
-    ssh dokutah@100.75.0.83
-
-JupyterLab runs in tmux session `jupyter`. To change its password:
-
-    jupyter server password
-    kill <jupyter PID>
-    tmux new -d -s jupyter '/home/dokutah/miniconda3/bin/jupyter-lab --no-browser --port=8888'
-
-Do the kill and restart over SSH, not from a JupyterLab terminal — that
-terminal dies with the server it is running inside.
-
 ## prts-0 — API
 
     gocryptfs ~/retinax-vault ~/retinax-data
