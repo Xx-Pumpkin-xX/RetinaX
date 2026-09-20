@@ -321,14 +321,14 @@ def health():
 
     return out
     
-    @app.post("/infer")
-    async def infer(
-        file: UploadFile = File(...),
-        ccem: bool = Query(
-            default=None,
-            description="override CCEM_ON_UPLOAD for this request"
-        ),
-    ):
+@app.post("/infer")
+async def infer(
+    file: UploadFile = File(...),
+    ccem: bool = Query(
+        default=None,
+        description="override CCEM_ON_UPLOAD for this request"
+    ),
+):
     want_ccem = CCEM_ON_UPLOAD if ccem is None else ccem
 
     # ----------------------------------------------------------
