@@ -4,6 +4,7 @@ import { api, GRADES, gradeVar } from "../api.js";
 import ApiImage from "../ApiImage.jsx";
 import RegionOverlay from "../RegionOverlay.jsx";
 import LesionBar, { LESIONS } from "../LesionBar.jsx";
+import NextEyeButton from "./NextEyeButton.jsx";
 
 const when = (iso) =>
   new Date(iso).toLocaleString("en-GB",
@@ -19,7 +20,16 @@ const SUPPRESSED = {
   no_map: "The service returned no explanation map for this image.",
 };
 
+// Remount per case. Going from one eye to the other keeps the same route
+// component alive, so without a key the previous eye's half-made assessment,
+// edit form, amend mode and delete dialog would carry over to the new eye and
+// could be saved against a photograph the doctor has not looked at yet.
 export default function CaseDetail() {
+  const { id } = useParams();
+  return <CaseDetailInner key={id} />;
+}
+
+function CaseDetailInner() {
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
@@ -208,13 +218,18 @@ export default function CaseDetail() {
             <span className="muted">{c.eye === "OD" ? "Right eye · OD" : "Left eye · OS"}</span>
           </div>
         </div>
-        <span className={graded ? "pill pill-live" : "pill"}
-              style={failed ? { color: "var(--g4)", borderColor: "var(--g4)" } : undefined}>
-          {reviewed ? "Reviewed"
-            : graded ? "Awaiting your review"
-            : processing ? "Grading…"
-            : "Grading failed"}
-        </span>
+        <div className="row" style={{ gap: 10 }}>
+          {/* Hidden while the "Result x of y" card below is showing, so there
+              are never two next-eye buttons on screen at once. */}
+          {!hasNextResult && <NextEyeButton dirty={dirty} />}
+          <span className={graded ? "pill pill-live" : "pill"}
+                style={failed ? { color: "var(--g4)", borderColor: "var(--g4)" } : undefined}>
+            {reviewed ? "Reviewed"
+              : graded ? "Awaiting your review"
+              : processing ? "Grading…"
+              : "Grading failed"}
+          </span>
+        </div>
       </div>
 
       {hasNextResult && (
