@@ -15,6 +15,16 @@ import { seedDoctors } from "./seed.js";
 import { UPLOAD_DIR } from "./paths.js";
 import { VERSION, versionLine } from "./version.js";
 import { chatOnce, chatStream, chatReachable, chatModel } from "./chat.js";
+import {
+  createRateLimiter,
+  createBudgetLimiter,
+  createConcurrencyLimiter,
+  estimateJsonTokens,
+  clientIpKey,
+  emailKey,
+  userKey,
+  envInt,
+} from "./rate-limit.js";
 
 const PORT = process.env.PORT || 3000;
 const SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
@@ -109,6 +119,179 @@ function issueSession(res, doctorId, keepSignedIn) {
   });
 }
 
+/* ---------------------------------------------------------- rate limits --- */
+
+const MINUTE = 60 * 1000;
+const HOUR = 60 * MINUTE;
+
+// Public/auth routes get both a broad client-IP cap and, where useful, a
+// per-identifier cap. The second one is what stops a targeted password attack
+// even when many real users share one reverse proxy.
+const healthIpLimit = createRateLimiter({
+  name: "health",
+  windowMs: MINUTE,
+  limit: envInt("RATE_HEALTH_IP_MAX", 120),
+  key: clientIpKey,
+});
+
+const loginIpLimit = createRateLimiter({
+  name: "login-ip",
+  windowMs: 15 * MINUTE,
+  limit: envInt("RATE_LOGIN_IP_MAX", 100),
+  key: clientIpKey,
+  message: "Too many sign-in attempts from this client. Try again later.",
+});
+
+const loginAccountLimit = createRateLimiter({
+  name: "login-account-client",
+  windowMs: 15 * MINUTE,
+  limit: envInt("RATE_LOGIN_ACCOUNT_MAX", 10),
+  key: (req) => `${emailKey(req)}:${clientIpKey(req)}`,
+  message: "Too many sign-in attempts for this account from this client. Try again later.",
+});
+
+const signupIpLimit = createRateLimiter({
+  name: "signup",
+  windowMs: HOUR,
+  limit: envInt("RATE_SIGNUP_IP_MAX", 20),
+  key: clientIpKey,
+  message: "Too many account creation attempts. Try again later.",
+});
+
+const forgotIpLimit = createRateLimiter({
+  name: "password-forgot-ip",
+  windowMs: HOUR,
+  limit: envInt("RATE_FORGOT_IP_MAX", 50),
+  key: clientIpKey,
+  message: "Too many password reset requests. Try again later.",
+});
+
+const forgotAccountLimit = createRateLimiter({
+  name: "password-forgot-account",
+  windowMs: HOUR,
+  limit: envInt("RATE_FORGOT_ACCOUNT_MAX", 5),
+  key: emailKey,
+  message: "Too many password reset requests for this address. Try again later.",
+});
+
+const resetIpLimit = createRateLimiter({
+  name: "password-reset",
+  windowMs: 15 * MINUTE,
+  limit: envInt("RATE_RESET_IP_MAX", 30),
+  key: clientIpKey,
+  message: "Too many reset attempts. Try again later.",
+});
+
+// Chat is GPU-backed and streams can stay open for minutes. Frequency limits
+// stop request spam; concurrency limits stop a burst of parallel streams from
+// pinning the model before the per-minute counter becomes useful.
+const chatMinuteLimit = createRateLimiter({
+  name: "chat-minute",
+  windowMs: MINUTE,
+  limit: envInt("RATE_CHAT_PER_MINUTE", 12),
+  key: userKey,
+  message: "Chat request limit reached. Try again in a moment.",
+});
+
+const chatHourLimit = createRateLimiter({
+  name: "chat-hour",
+  windowMs: HOUR,
+  limit: envInt("RATE_CHAT_PER_HOUR", 120),
+  key: userKey,
+  message: "Hourly chat limit reached. Try again later.",
+});
+
+// Request count answers "how often?". Token budget answers "how much data?".
+// Both chatbot endpoints use the same user-keyed buckets, so switching between
+// general chat and case chat cannot reset or bypass the data allowance.
+const chatTokenCost = (req) => estimateJsonTokens(req.body);
+
+const chatTokenBudget10m = createBudgetLimiter({
+  name: "chat-token-budget-10m",
+  windowMs: 10 * MINUTE,
+  budget: envInt("RATE_CHAT_TOKEN_BUDGET_10_MIN", 16_000),
+  maxCost: envInt("RATE_CHAT_MAX_REQUEST_TOKENS", 4_000),
+  cost: chatTokenCost,
+  key: userKey,
+  headerPrefix: "TokenBudget-10m",
+  message: "Chat data budget for the last 10 minutes has been reached.",
+  maxCostMessage: "This chat request contains too much text.",
+});
+
+const chatTokenBudgetHour = createBudgetLimiter({
+  name: "chat-token-budget-hour",
+  windowMs: HOUR,
+  budget: envInt("RATE_CHAT_TOKEN_BUDGET_HOUR", 64_000),
+  cost: chatTokenCost,
+  key: userKey,
+  headerPrefix: "TokenBudget-Hour",
+  message: "Hourly chat data budget has been reached.",
+});
+
+const chatUserConcurrency = createConcurrencyLimiter({
+  name: "chat-user-concurrency",
+  limit: envInt("RATE_CHAT_USER_CONCURRENT", 2),
+  key: userKey,
+  message: "You already have too many chat replies running.",
+});
+
+const chatGlobalConcurrency = createConcurrencyLimiter({
+  name: "chat-global-concurrency",
+  limit: envInt("RATE_CHAT_GLOBAL_CONCURRENT", 6),
+  key: () => "global",
+  message: "The assistant is busy. Try again in a moment.",
+});
+
+// Grading/explanation routes consume the other GPU service. Keep one expensive
+// job per signed-in user and put a modest global ceiling around the model.
+const aiUserConcurrency = createConcurrencyLimiter({
+  name: "ai-user-concurrency",
+  limit: envInt("RATE_AI_USER_CONCURRENT", 1),
+  key: userKey,
+  message: "Another grading request is already running for your account.",
+});
+
+const aiGlobalConcurrency = createConcurrencyLimiter({
+  name: "ai-global-concurrency",
+  limit: envInt("RATE_AI_GLOBAL_CONCURRENT", 4),
+  key: () => "global",
+  message: "The grading service is busy. Try again in a moment.",
+});
+
+const uploadUserLimit = createRateLimiter({
+  name: "case-upload",
+  windowMs: 10 * MINUTE,
+  limit: envInt("RATE_UPLOAD_PER_10_MIN", 10),
+  key: userKey,
+  message: "Too many case uploads. Try again later.",
+});
+
+const regradeUserLimit = createRateLimiter({
+  name: "case-regrade",
+  windowMs: 10 * MINUTE,
+  limit: envInt("RATE_REGRADE_PER_10_MIN", 6),
+  key: userKey,
+  message: "Too many re-grade requests. Try again later.",
+});
+
+const camExplainLimit = createRateLimiter({
+  name: "explain-cam",
+  windowMs: 10 * MINUTE,
+  limit: envInt("RATE_CAM_EXPLAIN_PER_10_MIN", 12),
+  key: userKey,
+  skip: (req) => req.query.ccem !== "0",
+  message: "Too many explanation redraws. Try again later.",
+});
+
+const ccemExplainLimit = createRateLimiter({
+  name: "explain-ccem",
+  windowMs: HOUR,
+  limit: envInt("RATE_CCEM_EXPLAIN_PER_HOUR", 4),
+  key: userKey,
+  skip: (req) => req.query.ccem === "0",
+  message: "CCEM is expensive and its hourly limit has been reached.",
+});
+
 /**
  * Liveness probe. Deliberately unauthenticated, because it is what the tunnel,
  * the status script and any uptime checker call before anyone has a session.
@@ -118,7 +301,7 @@ function issueSession(res, doctorId, keepSignedIn) {
  * duration. `model` is the one that matters — the API stays up and serves every
  * existing case when the grading service is down; only new uploads fail.
  */
-app.get("/api/health", async (_req, res) => {
+app.get("/api/health", healthIpLimit, async (_req, res) => {
   let model = false;
   try {
     const r = await fetch(`${aiUrl()}/health`, { signal: AbortSignal.timeout(4000) });
@@ -148,7 +331,7 @@ app.get("/api/health", async (_req, res) => {
   });
 });
 
-app.post("/api/login", (req, res) => {
+app.post("/api/login", loginIpLimit, loginAccountLimit, (req, res) => {
   const { email, password, keepSignedIn } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: "Email and password are required" });
 
@@ -158,6 +341,9 @@ app.post("/api/login", (req, res) => {
   }
 
   issueSession(res, doc.DoctorID, keepSignedIn);
+  // A correct password clears the account-specific failure bucket so normal
+  // repeated sign-ins do not inherit earlier mistakes for the full window.
+  loginAccountLimit.reset(req);
   res.json({ id: doc.DoctorID, fullName: doc.FullName });
 });
 
@@ -170,7 +356,7 @@ app.post("/api/login", (req, res) => {
 //
 // This is a DEMO decision and the report should say so. A screening tool a
 // hospital actually ran would provision accounts, not let the internet join.
-app.post("/api/signup", async (req, res) => {
+app.post("/api/signup", signupIpLimit, async (req, res) => {
   const fullName = String(req.body?.fullName || "").trim();
   const email = String(req.body?.email || "").toLowerCase().trim();
   const password = String(req.body?.password || "");
@@ -225,7 +411,7 @@ app.post("/api/logout", (req, res) => {
 const sha256 = (v) => createHash("sha256").update(v).digest("hex");
 const RESET_MINUTES = 30;
 
-app.post("/api/password/forgot", async (req, res) => {
+app.post("/api/password/forgot", forgotIpLimit, forgotAccountLimit, async (req, res) => {
   const email = String(req.body?.email || "").toLowerCase().trim();
   const doc = email ? db.prepare("SELECT DoctorID FROM doctors WHERE Email = ?").get(email) : null;
 
@@ -266,7 +452,7 @@ app.post("/api/password/forgot", async (req, res) => {
   res.json({ ok: true, delivery: mailConfigured() ? "email" : "unconfigured" });
 });
 
-app.post("/api/password/reset", (req, res) => {
+app.post("/api/password/reset", resetIpLimit, (req, res) => {
   const { token, password } = req.body || {};
   if (!token || !password) return res.status(400).json({ error: "Token and a new password are required" });
   if (String(password).length < 8) return res.status(400).json({ error: "Use at least 8 characters" });
@@ -378,7 +564,7 @@ const reviewHistory = (caseId) =>
  * Streams by default. `?stream=0` returns one JSON answer instead, which is
  * easier to debug with curl.
  */
-app.post("/api/chat", auth, async (req, res) => {
+app.post("/api/chat", auth, chatMinuteLimit, chatHourLimit, chatTokenBudget10m, chatTokenBudgetHour, chatUserConcurrency, chatGlobalConcurrency, async (req, res) => {
   const { messages } = req.body || {};
   const wantsStream = req.query.stream !== "0";
   try {
@@ -484,7 +670,7 @@ async function dropSupersededFailures(doctorId, patientCode, eye, keepCaseId) {
   return stale.length;
 }
 
-app.post("/api/cases", auth, upload.single("image"), async (req, res) => {
+app.post("/api/cases", auth, uploadUserLimit, aiUserConcurrency, aiGlobalConcurrency, upload.single("image"), async (req, res) => {
   const { patientCode, birthYear, patientSex, eyePosition } = req.body || {};
   if (!req.file) return res.status(400).json({ error: "An image is required" });
   if (!patientCode || !eyePosition) {
@@ -558,7 +744,7 @@ app.post("/api/cases", auth, upload.single("image"), async (req, res) => {
  * FAILED only. A GRADED case already has a prediction, and re-running the model
  * over it would overwrite the very number BR-4 exists to preserve.
  */
-app.post("/api/cases/:id/regrade", auth, async (req, res) => {
+app.post("/api/cases/:id/regrade", auth, regradeUserLimit, aiUserConcurrency, aiGlobalConcurrency, async (req, res) => {
   const row = ownCase(req.params.id, req.doctorId);
   if (!row) return res.status(404).json({ error: "Case not found" });
   if (row.Status !== "FAILED") {
@@ -616,7 +802,7 @@ app.post("/api/cases/:id/regrade", auth, async (req, res) => {
  *
  * The stored grade is never touched — see explainCcem.
  */
-app.post("/api/cases/:id/explain", auth, async (req, res) => {
+app.post("/api/cases/:id/explain", auth, camExplainLimit, ccemExplainLimit, aiUserConcurrency, aiGlobalConcurrency, async (req, res) => {
   const row = ownCase(req.params.id, req.doctorId);
   if (!row) return res.status(404).json({ error: "Case not found" });
   if (row.Grade == null) {
@@ -895,6 +1081,12 @@ app.post("/api/cases/:id/mark", auth, (req, res) => {
 app.post(
   "/api/cases/:id/chat",
   auth,
+  chatMinuteLimit,
+  chatHourLimit,
+  chatTokenBudget10m,
+  chatTokenBudgetHour,
+  chatUserConcurrency,
+  chatGlobalConcurrency,
   async (req, res) => {
     const row = ownCase(
       req.params.id,

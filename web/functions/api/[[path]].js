@@ -40,6 +40,17 @@ export async function onRequest(context) {
   proxied.headers.set("origin", url.origin);
   proxied.headers.delete("host");
 
+  // Never trust client-supplied copies of the internal rate-limit headers.
+  // If API_PROXY_SECRET is configured on both Pages and the API host, forward
+  // Cloudflare's authenticated client IP together with that shared secret.
+  proxied.headers.delete("x-retinax-client-ip");
+  proxied.headers.delete("x-retinax-proxy-secret");
+  if (env.API_PROXY_SECRET) {
+    const clientIp = request.headers.get("CF-Connecting-IP");
+    if (clientIp) proxied.headers.set("x-retinax-client-ip", clientIp);
+    proxied.headers.set("x-retinax-proxy-secret", env.API_PROXY_SECRET);
+  }
+
   const response = await fetch(proxied);
 
   // Set-Cookie arrives with SameSite=None; Secure, which is correct

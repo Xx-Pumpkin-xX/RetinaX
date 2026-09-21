@@ -8,7 +8,8 @@
     "start": "node server.js",
     "seed": "node --env-file-if-exists=.env seed.js",
     "seed:demo": "node --env-file-if-exists=.env seed-demo.js --force",
-    "precompute": "node --env-file-if-exists=.env precompute-demo.js"
+    "precompute": "node --env-file-if-exists=.env precompute-demo.js",
+    "test": "node --test rate-limit.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

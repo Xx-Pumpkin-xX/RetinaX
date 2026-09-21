@@ -80,6 +80,7 @@ Environment variables, under Settings → Environment variables → **Production
 | Variable | Value |
 |---|---|
 | `API_ORIGIN` | the tunnel in front of `prts-0`, e.g. `https://acuteness-finless-pluck.ngrok-free.dev` — **no trailing slash** |
+| `API_PROXY_SECRET` | a long random value; set the **same value** in `server/host.env`. It authenticates the client-IP header used by rate limiting. |
 | `VITE_API_URL` | **leave unset** |
 
 `VITE_API_URL` must stay empty. `web/src/api.js` falls back to `""`, which makes
@@ -200,6 +201,7 @@ than deploying a tar. Worth knowing before you debug anything.
 | `AI_URL` | `http://spark-063e:8000` — the model, over Tailscale |
 | `WEB_ORIGIN` | `https://retinax.pages.dev` |
 | `JWT_SECRET` | a real random value. If it is still the placeholder, every session token is forgeable. |
+| `API_PROXY_SECRET` | another independent random value, identical to the Cloudflare Pages variable. This lets the API trust the forwarded client IP without trusting arbitrary callers. |
 | `NGROK_DOMAIN` | the reserved domain fronting this host |
 | `RESEND_API_KEY`, `MAIL_FROM` | password-reset email; without them the app says plainly that it cannot send |
 
