@@ -28,8 +28,6 @@ export default function Navbar() {
       setActive(current ? current.id : "");
     };
     window.addEventListener("scroll", onScroll);
-    onScroll();
-    return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
   const goToSection = (id) =>
@@ -50,13 +48,13 @@ export default function Navbar() {
         <nav className="nav-links" aria-label="Main navigation">
           {LINKS.map((link) => (
             <button key={link.id} type="button"
-                    className={`nav-link ${active === link.id ? "nav-link-active" : ""}`}
-                    onClick={() => goToSection(link.id)}>
+              className={`nav-link ${active === link.id ? "nav-link-active" : ""}`}
+              onClick={() => goToSection(link.id)}>
               {link.label}
             </button>
           ))}
           {me ? (
-            <Link to="/cases/new" className="btn btn-primary btn-sm nav-cta">My cases</Link>
+            <Link to="/cases" className="btn btn-primary btn-sm nav-cta">My cases</Link>
           ) : (
             <Link to="/login" className="btn btn-primary btn-sm nav-cta">Sign in</Link>
           )}
