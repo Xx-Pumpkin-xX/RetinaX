@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
+import MessageCircleQuestionMark from 'lucide-react'
 import { api } from "./api.js";
 
 const GENERAL_KEY = "general";
@@ -78,9 +79,10 @@ export default function ChatbotPopup() {
         className="chatbot-fab"
         aria-label="Open RetinaX AI"
         onClick={() => setOpen(true)}
+        title="Ask AI assistant"
       >
         <span className="chatbot-fab-icon" aria-hidden="true">
-          <span className="chatbot-fab-question">?</span>
+          <MessageCircleQuestionMark className="chatbot-fab-question" />
         </span>
       </button>
     );
