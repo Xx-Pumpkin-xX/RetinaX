@@ -104,7 +104,8 @@ case "${1:-start}" in
       || echo "note: $AI_URL is not answering. The API will still serve every existing case; only new uploads will fail."
 
     API_CMD="NODE_ENV=production PORT=$PORT VAR_DIR='$VAR_DIR' WEB_ORIGIN='$WEB_ORIGIN' \
-       JWT_SECRET='$JWT_SECRET' AI_URL='$AI_URL' SEED_DEMO=1 OLLAMA_URL='${OLLAMA_URL:-}' CHAT_MODEL='${CHAT_MODEL:-}' \
+       JWT_SECRET='$JWT_SECRET' AI_URL='$AI_URL' SEED_DEMO='${SEED_DEMO:-1}' OLLAMA_URL='${OLLAMA_URL:-}' CHAT_MODEL='${CHAT_MODEL:-}' \
+       API_PROXY_SECRET='${API_PROXY_SECRET:-}' RATE_LOGIN_ACCOUNT_MAX='${RATE_LOGIN_ACCOUNT_MAX:-}' \
        RESEND_API_KEY='${RESEND_API_KEY:-}' MAIL_FROM='${MAIL_FROM:-}' \
        node server.js 2>&1 | tee '$LOG'"
     if [ "$HAVE_SESSION" = "1" ]; then
