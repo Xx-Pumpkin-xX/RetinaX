@@ -122,15 +122,15 @@ export default function LesionBar({ lesions, active, onPick }) {
       </div>
 
       {/* The legend is not decoration. Without it a dash and a zero look like
-          the same answer, and they are not. */}
-      <div className="muted" style={{ fontSize: 12, lineHeight: 1.55 }}>
-        <strong>n</strong> areas marked · <strong>0</strong> looked for, none found ·{" "}
-        <strong>—</strong> not assessed, no claim made
+          the same answer, and they are not. Each line stands on its own — no
+          keyboard-unfriendly em dash, and no cramming three ideas onto one
+          line the doctor has to re-parse. */}
+      <div className="muted" style={{ fontSize: 12, lineHeight: 1.8 }}>
+        <div><strong>n</strong> areas marked</div>
+        <div><strong>0</strong> looked for, none found</div>
+        <div><strong>-</strong> not assessed, no claim made</div>
         {anyProvisional && (
-          <>
-            {" · "}
-            <strong>~n</strong> experimental, shown but not relied on
-          </>
+          <div><strong>~n</strong> experimental areas, shown but not relied on</div>
         )}
       </div>
     </div>

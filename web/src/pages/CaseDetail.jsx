@@ -1,13 +1,10 @@
 import { useEffect, useState } from "react";
-import { useParams, Link, useNavigate, useLocation } from "react-router-dom"; // MỚI THÊM: useLocation
+import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
 import { api, GRADES, gradeVar } from "../api.js";
 import ApiImage from "../ApiImage.jsx";
 import RegionOverlay from "../RegionOverlay.jsx";
 import LesionBar, { LESIONS } from "../LesionBar.jsx";
 
-// "Default" is always available — it is the photograph with nothing on top.
-// CAM and CCEM appear only when the service actually returned that map, so the
-// control can never offer a method it would then render as a different one.
 const when = (iso) =>
   new Date(iso).toLocaleString("en-GB",
     { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -16,8 +13,6 @@ const METHODS = [
   { key: "cam", label: "Grad-CAM" },
 ];
 
-// Why the service drew no map. Said out loud, because an overlay control that
-// silently offers nothing reads as a broken service, and this is a finding.
 const SUPPRESSED = {
   grade_0: "No retinopathy was found, so there is nothing for an explanation to point at. A map drawn here would mark noise.",
   outside_fov: "Most of the model's attention fell outside the retina — on the crop edge or the black border — so the map describes the photograph, not the eye. It has not been shown.",
@@ -27,7 +22,7 @@ const SUPPRESSED = {
 export default function CaseDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const location = useLocation(); // MỚI THÊM
+  const location = useLocation();
   const [c, setCase] = useState(null);
   const [error, setError] = useState(null);
 
@@ -42,8 +37,8 @@ export default function CaseDetail() {
   const [formError, setFormError] = useState(null);
   const [regrading, setRegrading] = useState(false);
   const [amending, setAmending] = useState(false);
-  const [explaining, setExplaining] = useState(false); // false | "cam" | "ccem"
-  const [editing, setEditing] = useState(null);        // null, or a draft of the details
+  const [explaining, setExplaining] = useState(false);
+  const [editing, setEditing] = useState(null);
   const [savingDetails, setSavingDetails] = useState(false);
   const [detailsError, setDetailsError] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -52,18 +47,13 @@ export default function CaseDetail() {
   const [deleteError, setDeleteError] = useState(null);
   const [explainError, setExplainError] = useState(null);
 
-  // MỚI THÊM: chỉ có giá trị ngay sau khi upload cả 2 mắt cùng lúc từ NewCase.jsx,
-  // giúp dẫn bác sĩ xem lần lượt kết quả từng mắt thay vì rơi thẳng về worklist.
   const resultQueue = location.state?.resultQueue ?? null;
   const resultStep = location.state?.resultStep ?? 0;
   const hasNextResult = resultQueue && resultStep < resultQueue.length - 1;
   const nextResultId = hasNextResult ? resultQueue[resultStep + 1] : null;
 
-  // Có thay đổi chưa lưu nếu đang mở form sửa thông tin bệnh nhân,
-  // hoặc đang điền/sửa đánh giá (Agree/Disagree) mà chưa bấm Save.
   const dirty = editing !== null || agreement !== null;
 
-  // Đóng tab / reload / gõ URL khác / rời website — trình duyệt tự hỏi xác nhận.
   useEffect(() => {
     function handleBeforeUnload(e) {
       if (!dirty) return;
@@ -74,8 +64,6 @@ export default function CaseDetail() {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [dirty]);
 
-  // Escape closes the delete dialog, but not once the request is in flight:
-  // there is nothing to go back to after the rows are gone.
   useEffect(() => {
     if (!confirmDelete) return;
     const onKey = (e) => { if (e.key === "Escape" && !deleting) setConfirmDelete(false); };
@@ -92,17 +80,12 @@ export default function CaseDetail() {
         .then((row) => {
           if (!alive) return;
           setCase(row);
-          // Open on the richest explanation this case actually has, rather than
-          // on a method that would fall back to a different picture.
           const has = row.overlays || [];
           setOverlay(
             row.regions?.length ? "regions"
               : has.includes("cam") ? "cam"
               : "Default"
           );
-          // A case can be mid-grading when the page opens, or be re-graded from
-          // another tab. Without this the doctor sits on a stale "Grading…"
-          // until they think to refresh.
           if (row.status === "PROCESSING") timer = setTimeout(load, 2000);
         })
         .catch((e) => alive && setError(e.message));
@@ -167,46 +150,43 @@ export default function CaseDetail() {
       setCase(await api.regrade(id));
     } catch (err) {
       setFormError(err.message);
-      setCase(await api.case(id));   // the server put it back to FAILED
+      setCase(await api.case(id));
     } finally {
       setRegrading(false);
     }
   }
 
   async function save() {
-  setSaving(true);
-  setFormError(null);
+    setSaving(true);
+    setFormError(null);
 
-  try {
-    const updated = await api.mark(id, {
-      agreement,
-      correctedGrade: corrected,
-      reason,
-    });
+    try {
+      const updated = await api.mark(id, {
+        agreement,
+        correctedGrade: corrected,
+        reason,
+      });
 
-    setCase(updated);
+      setCase(updated);
 
-    setAgreement(null);
-    setCorrected(null);
-    setReason("");
-    setAmending(false);
+      setAgreement(null);
+      setCorrected(null);
+      setReason("");
+      setAmending(false);
 
-  } catch (err) {
-    setFormError(err.message);
+    } catch (err) {
+      setFormError(err.message);
 
-  } finally {
-    setSaving(false);
+    } finally {
+      setSaving(false);
+    }
   }
-}
 
   if (error) return <div className="page"><div className="err">{error}</div></div>;
   if (!c) return <div className="page muted">Loading…</div>;
 
   const available = c.overlays || [];
 
-  // One overlay control drives everything on the photograph, so a lesion class
-  // is just another value of it: "lesion:MA". That makes the classes mutually
-  // exclusive with each other and with the heatmaps for free.
   const activeLesion = overlay.startsWith("lesion:") ? overlay.slice(7) : null;
   const lesionShown = (c.lesions?.classes || []).find((l) => l.key === activeLesion);
   const lesionName = LESIONS.find((l) => l.key === activeLesion)?.name ?? activeLesion;
@@ -237,7 +217,6 @@ export default function CaseDetail() {
         </span>
       </div>
 
-      {/* MỚI THÊM: thanh chuyển sang kết quả mắt tiếp theo, chỉ hiện khi vừa upload 2 mắt */}
       {hasNextResult && (
         <div className="card row" style={{ padding: 12, gap: 12, justifyContent: "space-between", alignItems: "center" }}>
           <span style={{ fontSize: 13.5 }}>
@@ -254,7 +233,6 @@ export default function CaseDetail() {
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 380px", gap: 18, alignItems: "start" }}>
 
-        {/* ------------------------------------------------------- viewer */}
         <div className="card stack" style={{ overflow: "hidden" }}>
           <div className="viewer" style={{ height: 560 }}>
             <ApiImage path={`/api/cases/${c.id}/image`} alt="Fundus photograph" />
@@ -300,20 +278,23 @@ export default function CaseDetail() {
                      onPick={(k) => setOverlay(k ? `lesion:${k}` : "Default")} />
 
           {lesionShown && (
-            <div className="muted" style={{ fontSize: 12.5, padding: "0 16px 12px", lineHeight: 1.5 }}>
-              {lesionShown.count} area{lesionShown.count === 1 ? "" : "s"} marked as{" "}
-              <strong>{lesionName}</strong> by a lesion model, which is a different model from the
-              one that produced grade {c.grade}. The two can disagree; neither overrules your reading.
-              {lesionShown.reliability && lesionShown.reliability !== "established" && (
-                <>
-                  {" "}This class is <strong>experimental</strong>
-                  {lesionShown.recall != null && (
-                    <> — in validation it found {Math.round(lesionShown.recall * 100)}% of them,
-                      measured on {lesionShown.gt_lesions} lesions</>
-                  )}. Treat these marks as hints, not findings.
-                </>
-              )}
-            </div>
+            <>
+              <div style={{ borderTop: "1px solid var(--line)", margin: "0 16px" }} />
+              <div className="muted" style={{ fontSize: 12.5, padding: "12px 16px", lineHeight: 1.5 }}>
+                {lesionShown.count} area{lesionShown.count === 1 ? "" : "s"} marked as{" "}
+                <strong>{lesionName}</strong> by a lesion model, which is a different model from the
+                one that produced grade {c.grade}. The two can disagree; neither overrules your reading.
+                {lesionShown.reliability && lesionShown.reliability !== "established" && (
+                  <>
+                    {" "}This class is <strong>experimental</strong>
+                    {lesionShown.recall != null && (
+                      <> — in validation it found {Math.round(lesionShown.recall * 100)}% of them,
+                        measured on {lesionShown.gt_lesions} lesions</>
+                    )}. Treat these marks as hints, not findings.
+                  </>
+                )}
+              </div>
+            </>
           )}
 
           {available.length === 0 && (
@@ -344,7 +325,6 @@ export default function CaseDetail() {
           )}
         </div>
 
-        {/* -------------------------------------------------------- panel */}
         <div className="stack" style={{ gap: 14 }}>
           {editing ? (
             <form className="card stack" style={{ padding: 16, gap: 12 }} onSubmit={saveDetails}>
@@ -517,65 +497,42 @@ export default function CaseDetail() {
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 {[["AGREE", "Agree", "--g0"], ["DISAGREE", "Disagree", "--g2"]].map(([v, label, tone]) => (
                   <button
-  key={v}
-  type="button"
-  className="btn btn-ghost"
-  onClick={() => {
-    setAgreement(v);
-    setReason("");
-
-    if (v === "AGREE") {
-      setCorrected(null);
-    }
-  }}
-  style={{
-    height: 58,
-    borderWidth: agreement === v ? 2 : 1,
-    borderColor:
-      agreement === v
-        ? `var(${tone})`
-        : "var(--line-strong)",
-    background:
-      agreement === v
-        ? `color-mix(in srgb, var(${tone}) 12%, transparent)`
-        : "transparent",
-    fontWeight: agreement === v ? 600 : 500,
-  }}
->
-  {label}
-</button>
-))}
-</div>
+                    key={v}
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      setAgreement(v);
+                      setReason("");
+                      if (v === "AGREE") {
+                        setCorrected(null);
+                      }
+                    }}
+                    style={{
+                      height: 58,
+                      borderWidth: agreement === v ? 2 : 1,
+                      borderColor: agreement === v ? `var(${tone})` : "var(--line-strong)",
+                      background: agreement === v ? `color-mix(in srgb, var(${tone}) 12%, transparent)` : "transparent",
+                      fontWeight: agreement === v ? 600 : 500,
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               {agreement === "AGREE" && (
-  <div className="stack" style={{ gap: 6 }}>
-    <div
-      className="row"
-      style={{
-        justifyContent: "space-between",
-      }}
-    >
-      <span style={{ fontSize: 13 }}>
-        Note
-      </span>
-
-      <span
-        className="muted"
-        style={{ fontSize: 11.5 }}
-      >
-        Optional
-      </span>
-    </div>
-
-    <textarea
-      className="input"
-      value={reason}
-      onChange={(e) =>
-        setReason(e.target.value)
-      }
-      placeholder="Add an observation about the prediction or highlighted regions…"
-    />
-  </div>
-)}
+                <div className="stack" style={{ gap: 6 }}>
+                  <div className="row" style={{ justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 13 }}>Note</span>
+                    <span className="muted" style={{ fontSize: 11.5 }}>Optional</span>
+                  </div>
+                  <textarea
+                    className="input"
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    placeholder="Add an observation about the prediction or highlighted regions…"
+                  />
+                </div>
+              )}
 
               {agreement === "DISAGREE" && (
                 <>
@@ -634,14 +591,14 @@ export default function CaseDetail() {
                 <h3 id="del-title" className="modal-title">Delete this case?</h3>
                 <div style={{ fontSize: 13.5, lineHeight: 1.55 }}>
                   The photograph{available.length ? ", its explanation maps" : ""} and the
-                  model’s grade go with it. This cannot be undone.
+                  model's grade go with it. This cannot be undone.
                 </div>
 
                 {reviewed && (
                   <>
                     <div className="modal-losing">
                       This case has a recorded assessment. Deleting it also removes:
-                      <div>· the model’s grade — {c.gradeLabel ?? "—"}</div>
+                      <div>· the model's grade — {c.gradeLabel ?? "—"}</div>
                       <div>
                         · your assessment — {c.agreement ?? "—"}
                         {c.correctedGrade != null && ` (corrected to ${c.correctedGrade})`}
