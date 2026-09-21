@@ -341,8 +341,8 @@ input[type="range"] { height: 20px; cursor: pointer; }
   right: 24px;
   bottom: 24px;
   z-index: 1200;
-  width: 48px;
-  height: 48px;
+  width: 60px;
+  height: 60px;
   padding: 0;
   border: none;
   border-radius: 50%;
@@ -353,8 +353,8 @@ input[type="range"] { height: 20px; cursor: pointer; }
 }
 
 .chatbot-fab-icon {
-  width: 48px;
-  height: 48px;
+  width: 60px;
+  height: 60px;
   border-radius: 50%;
   background: #1687ff;
   display: grid;
