@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { Layers, ScanEye, Sparkles, UploadCloud } from "lucide-react";
+import { ScanEye, Sparkles, UploadCloud } from "lucide-react";
 import SafeImage from "./SafeImage.jsx";
 import { api } from "../api.js";
 
@@ -9,7 +9,7 @@ export default function Hero() {
     const handleUploadClick = async () => {
         try {
             await api.me(); // throws if not signed in (401)
-            navigate("/cases");
+            navigate("/cases/new");
         } catch {
             navigate("/login", { state: { reason: "upload" } });
         }
