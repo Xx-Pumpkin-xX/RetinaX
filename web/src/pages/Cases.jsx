@@ -16,6 +16,15 @@ function StatusCell({ c }) {
   );
 }
 
+/**
+ * Filter one eye-row.
+ *
+ * Deliberately three narrow controls rather than one clever query language.
+ * A doctor working a list wants "this patient", "what still needs me", and
+ * "what is referable" — and referable is a real clinical threshold, not a
+ * convenience: grade >= 2 (moderate NPDR) is the point at which screening
+ * guidelines say send them to an ophthalmologist.
+ */
 function matches(c, { q, status, referableOnly }) {
   if (q) {
     const hay = `${c.patientCode} ${c.eye} ${c.birthYear ?? ""}`.toLowerCase();
@@ -25,12 +34,21 @@ function matches(c, { q, status, referableOnly }) {
   if (status === "REVIEWED" && c.status !== "REVIEWED") return false;
   if (status === "ATTENTION" && c.status !== "FAILED" && c.status !== "PROCESSING") return false;
   if (referableOnly) {
+    // The doctor's correction is the grade that counts where one exists.
     const g = c.correctedGrade ?? c.grade;
     if (g == null || g < 2) return false;
   }
   return true;
 }
 
+/**
+ * One row per eye, but the two eyes of a patient sit together.
+ *
+ * The grade is an eye-level fact, so the rows stay per eye. The referral
+ * decision, though, is made per patient and follows the worse eye — so showing
+ * OD and OS in separate places would leave the doctor doing that comparison
+ * from memory.
+ */
 function groupByPatient(cases) {
   const groups = new Map();
   for (const c of cases) {
@@ -44,6 +62,7 @@ function groupByPatient(cases) {
       return {
         patientCode,
         rows,
+        // The doctor's corrected grade is the one that counts where it exists.
         worst: graded.length
           ? Math.max(...graded.map((r) => (r.correctedGrade ?? r.grade)))
           : null,
@@ -61,10 +80,12 @@ export default function Cases() {
   const [status, setStatus] = useState("ALL");
   const [referableOnly, setReferableOnly] = useState(false);
   const [clearError, setClearError] = useState(null);
+  // Selection lives as ids, not rows: the worklist re-fetches every few
+  // seconds, so anything holding row objects would be stale by the next tick.
   const [selected, setSelected] = useState(() => new Set());
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [regrading, setRegrading] = useState(null);
+  const [regrading, setRegrading] = useState(null);   // null | {done, total}
   const [page, setPage] = useState(0);
   const navigate = useNavigate();
 
@@ -77,6 +98,10 @@ export default function Cases() {
         const rows = await api.cases();
         if (!alive) return;
         setCases(rows);
+        // Seeding a new account happens in the background, and an upload sits
+        // in PROCESSING while the model runs. Without this the first thing a
+        // new user sees is one row saying "Grading…" that never changes until
+        // they think to refresh.
         if (rows.some((c) => c.status === "PROCESSING")) {
           timer = setTimeout(load, 2000);
         }
@@ -99,6 +124,11 @@ export default function Cases() {
   const patients = cases ? groupByPatient(visible) : [];
   const allPatients = cases ? groupByPatient(cases).length : 0;
 
+  // Paged by PATIENT, not by row, and a patient is never split across a
+  // page boundary: the whole point of grouping the two eyes is that the
+  // referral decision compares them, and comparing across a page turn is
+  // comparing from memory. So a page holds whole patients up to roughly
+  // PAGE_ROWS rows, which lands on 10 for the usual two-eyes-per-patient list.
   const PAGE_ROWS = 10;
 
   const pages = [];
@@ -121,6 +151,8 @@ export default function Cases() {
 
   const clear = () => { setQ(""); setStatus("ALL"); setReferableOnly(false); };
 
+  // Narrowing the list while sitting on page 4 would show an empty table and
+  // look like the filter deleted everything.
   useEffect(() => { setPage(0); }, [q, status, referableOnly]);
 
   const chosen = cases?.filter((c) => selected.has(c.id)) ?? [];
@@ -135,6 +167,18 @@ export default function Cases() {
       return next;
     });
 
+  /**
+   * Re-grade the ticked cases whose grading failed.
+   *
+   * ONE AT A TIME, deliberately. Every re-grade is a full pass on the GPU that
+   * the model service also needs for live uploads; firing five at once does
+   * not make them finish sooner, it makes all five slow enough to time out and
+   * takes the service down with them. Sequential also means the counter is
+   * true - "3 of 5" is a fact, not an estimate.
+   *
+   * The API refuses to re-grade anything that is not FAILED, so only those are
+   * sent. Nothing here can overwrite a grade a doctor has already seen.
+   */
   async function regradeSelected() {
     setClearError(null);
     setRegrading({ done: 0, total: chosenFailed.length });
@@ -159,12 +203,25 @@ export default function Cases() {
     setRegrading(null);
   }
 
+  /**
+   * Delete whatever is ticked.
+   *
+   * This replaced two separate controls: a "remove every failed case" button
+   * that decided for you which cases were litter, and a per-row Remove that
+   * could only ever take one. Ticking says exactly what goes, and the same
+   * dialog covers one case and twelve.
+   *
+   * One request per case rather than a bulk endpoint: each deletion is then
+   * authorised and logged individually, and a failure part-way through leaves
+   * the rest deleted rather than rolling back work the doctor asked for.
+   */
   async function deleteSelected() {
     setConfirmDelete(false);
     setDeleting(true);
     setClearError(null);
 
     const results = await Promise.allSettled(
+      // A reviewed case needs the second, explicit signal the API asks for.
       chosen.map((c) =>
         api.deleteCase(c.id, c.status === "REVIEWED" ? "DELETE-REVIEWED" : undefined))
     );
@@ -274,6 +331,10 @@ export default function Cases() {
         </div>
       )}
 
+      {/* The dialog names every case it is about to remove. "12 selected" is a
+          number, and a number is not something you can check. A reviewed case
+          among them is called out separately, because that is the one where
+          something irreplaceable goes. */}
       {confirmDelete && (
         <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="del-many"
              onMouseDown={(e) => { if (e.target === e.currentTarget && !deleting) setConfirmDelete(false); }}>
@@ -355,13 +416,7 @@ export default function Cases() {
             <tbody>
               {shown.map((p) =>
                 p.rows.map((c, i) => (
-                  <tr key={c.id} onClick={() => navigate(`/cases/${c.id}`, {
-                        // Lets the doctor step to the other eye of this
-                        // patient from the result page instead of having to
-                        // come back here first — same "Next eye's result"
-                        // control that already runs right after an upload.
-                        state: { resultQueue: p.rows.map((r) => r.id), resultStep: i },
-                      })}
+                  <tr key={c.id} onClick={() => navigate(`/cases/${c.id}`)}
                       style={i === 0 && p !== shown[0] ? { borderTop: "2px solid var(--line-strong)" } : undefined}>
                     <td className="mono">
                       {i === 0 ? (
@@ -388,6 +443,10 @@ export default function Cases() {
                       )}
                     </td>
                     <td><StatusCell c={c} /></td>
+                    {/* stopPropagation on the cell, not just the input: the
+                        whole row navigates, and a click that lands on the
+                        padding beside the box would open the case instead of
+                        ticking it. */}
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}
                         onClick={(e) => e.stopPropagation()}>
                       <input
