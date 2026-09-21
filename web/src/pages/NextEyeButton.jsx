@@ -35,8 +35,11 @@ export default function NextEyeButton({ dirty = false }) {
 
   return (
     <Link to={`/cases/${other.id}`} onClick={confirmLeave}>
-      <button className="btn btn-ghost" style={{ height: 36, padding: "0 14px", fontSize: 13 }}>
-        Next eye · {other.eye === "OD" ? "Right (OD)" : "Left (OS)"} →
+      <button
+        className="btn btn-ghost"
+        style={{ height: 36, padding: "0 14px", fontSize: 13, background: "var(--surface)" }}
+      >
+        Next eye: {other.eye === "OD" ? "Right (OD)" : "Left (OS)"} →
       </button>
     </Link>
   );
