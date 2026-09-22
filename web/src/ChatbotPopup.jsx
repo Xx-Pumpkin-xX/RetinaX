@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
-import MessageCircleQuestionMark from 'lucide-react'
+import { MessageCircleQuestionMark } from 'lucide-react'
 import { api } from "./api.js";
 
 const GENERAL_KEY = "general";
