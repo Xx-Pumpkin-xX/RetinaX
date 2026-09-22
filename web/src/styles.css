@@ -532,7 +532,6 @@ textarea.input.chatbot-input {
   place-items: center;
   flex-shrink: 0;
 }
-}
 .logo-text {
   color: #101d2d;
   font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
