@@ -212,7 +212,7 @@ function CaseDetailInner() {
     <div className="page stack" style={{ gap: 16 }}>
       <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-end" }}>
         <div className="stack" style={{ gap: 4 }}>
-          <Link to="/cases" className="muted" style={{ fontSize: 13 }} onClick={goToCases}>← My cases</Link>
+          <Link to="/cases" className="muted" style={{ fontSize: 16, color: "var(--accent)", fontWeight: 600 }} onClick={goToCases}>← My cases</Link>
           <div className="row" style={{ gap: 12, alignItems: "baseline" }}>
             <span className="mono" style={{ fontSize: 22, fontWeight: 500 }}>{c.patientCode}</span>
             <span className="muted">{c.eye === "OD" ? "Right eye · OD" : "Left eye · OS"}</span>
@@ -594,7 +594,7 @@ function CaseDetailInner() {
           )}
 
           <button type="button" className="linkish"
-                  style={{ alignSelf: "center", fontSize: 12.5, color: "var(--danger)" }}
+                  style={{ alignSelf: "center", fontSize: 16, fontWeight: 600, color: "var(--danger)" }}
                   onClick={() => { setConfirmText(""); setDeleteError(null); setConfirmDelete(true); }}>
             Delete this case
           </button>

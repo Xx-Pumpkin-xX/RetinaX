@@ -115,7 +115,7 @@ export default function NewCase({ onDirtyChange }) {
   return (
     <div className="page stack" style={{ gap: 18, maxWidth: 1040 }}>
       <div className="stack" style={{ gap: 6 }}>
-        <Link to="/cases" className="muted" style={{ fontSize: 13 }} onClick={goToCases}>← My cases</Link>
+        <Link to="/cases" className="muted" style={{ fontSize: 16, color: "var(--accent)", fontWeight: 600 }} onClick={goToCases}>← My cases</Link>
         <h1 style={{ fontSize: 23, fontWeight: 600, margin: 0 }}>New case</h1>
       </div>
 
