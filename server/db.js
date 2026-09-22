@@ -41,6 +41,9 @@ CREATE TABLE IF NOT EXISTS doctors (
   FullName     TEXT NOT NULL,
   Email        TEXT NOT NULL UNIQUE,
   PasswordHash TEXT NOT NULL,
+  EmailVerified INTEGER NOT NULL DEFAULT 1,
+  VerifyTokenHash TEXT,
+  VerifyTokenExpiry TEXT,
   -- Password recovery: two nullable columns, as the class diagram draws it.
   -- Only the SHA-256 *hash* of the token is stored, so a stolen database
   -- cannot be turned back into working reset links, and the expiry is not
@@ -101,6 +104,11 @@ CREATE TABLE IF NOT EXISTS reviews (
 
 CREATE INDEX IF NOT EXISTS idx_cases_doctor ON cases(DoctorID, CreatedAt DESC);
 CREATE INDEX IF NOT EXISTS idx_reviews_case ON reviews(CaseID, CreatedAt);
+CREATE TABLE IF NOT EXISTS auth_attempts (
+  AttemptKey TEXT PRIMARY KEY,
+  WindowStartedAt TEXT NOT NULL,
+  Attempts INTEGER NOT NULL
+);
 `);
 
 /**
@@ -139,6 +147,9 @@ ensureColumn("predictions", "SuppressionReason", "TEXT");
 // The six lesion classes as one JSON block. NULL means the lesion models did
 // not run for this case, which is a different fact from "found nothing".
 ensureColumn("predictions", "Lesions", "TEXT");
+ensureColumn("doctors", "EmailVerified", "INTEGER NOT NULL DEFAULT 1");
+ensureColumn("doctors", "VerifyTokenHash", "TEXT");
+ensureColumn("doctors", "VerifyTokenExpiry", "TEXT");
 
 export const GRADE_LABELS = [
   "No DR",
