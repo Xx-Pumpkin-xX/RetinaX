@@ -1,22 +1,41 @@
-/**
- * Sending email, or honestly admitting that we cannot.
- *
- * No SDK: Resend and most providers are one HTTPS POST, and a dependency for
- * that is a dependency to keep patched.
- *
- * The important behaviour is the failure case. Until this is configured the
- * password-reset screen used to say "a reset link is on its way" and then send
- * nothing, which is the worst of both worlds — the user waits for something
- * that was never coming. isConfigured() lets the caller say what is true.
- */
-const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
-const MAIL_FROM = process.env.MAIL_FROM || "";
-// Overridable so the send path can be exercised against a local stub without
-// editing this file — and so a different provider with the same shape can be
-// swapped in without a code change.
-const MAIL_API_URL = process.env.MAIL_API_URL || "https://api.resend.com/emails";
+const GMAIL_CLIENT_ID = process.env.GMAIL_CLIENT_ID || "";
+const GMAIL_CLIENT_SECRET = process.env.GMAIL_CLIENT_SECRET || "";
+const GMAIL_REFRESH_TOKEN = process.env.GMAIL_REFRESH_TOKEN || "";
+const GMAIL_USER = process.env.GMAIL_USER || "";
+const MAIL_FROM = process.env.MAIL_FROM || GMAIL_USER;
 
-export const isConfigured = () => Boolean(RESEND_API_KEY && MAIL_FROM);
+export const isConfigured = () => Boolean(
+  GMAIL_CLIENT_ID && GMAIL_CLIENT_SECRET && GMAIL_REFRESH_TOKEN && GMAIL_USER && MAIL_FROM
+);
+
+async function accessToken() {
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: GMAIL_CLIENT_ID,
+      client_secret: GMAIL_CLIENT_SECRET,
+      refresh_token: GMAIL_REFRESH_TOKEN,
+      grant_type: "refresh_token",
+    }),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) throw new Error(`Google OAuth returned ${res.status}`);
+  return (await res.json()).access_token;
+}
+
+function rawMessage({ to, subject, text }) {
+  const message = [
+    `From: ${MAIL_FROM}`,
+    `To: ${to}`,
+    `Subject: ${subject}`,
+    "Content-Type: text/plain; charset=UTF-8",
+    "MIME-Version: 1.0",
+    "",
+    text,
+  ].join("\r\n");
+  return Buffer.from(message, "utf8").toString("base64url");
+}
 
 /**
  * @returns {Promise<{delivered: boolean, reason?: string}>}
@@ -29,15 +48,18 @@ export async function sendMail({ to, subject, text }) {
     return { delivered: false, reason: "not configured" };
   }
   try {
-    const res = await fetch(MAIL_API_URL, {
+    const res = await fetch(
+      `https://gmail.googleapis.com/gmail/v1/users/${encodeURIComponent(GMAIL_USER)}/messages/send`,
+      {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${RESEND_API_KEY}`,
+        Authorization: `Bearer ${await accessToken()}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ from: MAIL_FROM, to: [to], subject, text }),
+      body: JSON.stringify({ raw: rawMessage({ to, subject, text }) }),
       signal: AbortSignal.timeout(15000),
-    });
+      }
+    );
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       console.warn(`[mail] provider refused: ${res.status} ${body.slice(0, 200)}`);
