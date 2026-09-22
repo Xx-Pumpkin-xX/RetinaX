@@ -15,7 +15,7 @@ const EYES = [
  * the doctor fill this form twice for one patient. Uploading one eye is still
  * fine; the other slot is simply left empty.
  */
-export default function NewCase() {
+export default function NewCase({ onDirtyChange }) {
   const [form, setForm] = useState({ patientCode: "", birthYear: "", patientSex: "F" });
   const [images, setImages] = useState({ OD: null, OS: null });
   const [previews, setPreviews] = useState({ OD: null, OS: null });
@@ -31,14 +31,18 @@ export default function NewCase() {
 
   // Đóng tab / reload / gõ URL khác / rời website — trình duyệt tự hỏi xác nhận.
   useEffect(() => {
+    onDirtyChange(dirty);
     function handleBeforeUnload(e) {
       if (!dirty) return;
       e.preventDefault();
       e.returnValue = "";
     }
     window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [dirty]);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      onDirtyChange(false);
+    };
+  }, [dirty, onDirtyChange]);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const chosen = EYES.filter((e) => images[e.key]);
