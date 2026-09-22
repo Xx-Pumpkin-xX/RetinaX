@@ -2,14 +2,17 @@ import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { api } from "../api.js";
 
-// One screen, three states. The reset state is entered by the link in the
+// One screen, several states. The reset and verification states are entered by links in the
 // email (/reset?token=...), so it is read from the URL rather than clicked to.
 const tokenFromUrl = () => new URLSearchParams(window.location.search).get("token");
 
 export default function Login({ onSignedIn }) {
   const location = useLocation();
 
-  const [view, setView] = useState(() => (tokenFromUrl() ? "reset" : "login"));
+  const [view, setView] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return window.location.pathname === "/verify" ? "verify" : params.get("token") ? "reset" : "login";
+  });
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -64,8 +67,22 @@ export default function Login({ onSignedIn }) {
 
   const submitSignup = (e) => {
     e.preventDefault();
-    run(async () => onSignedIn(await api.signup(fullName, email, password)));
+    run(async () => {
+      const out = await api.signup(fullName, email, password);
+      setEmail(email);
+      setNote(out?.delivery === "email"
+        ? "Check your email for a confirmation link before signing in."
+        : "Your account was created, but email is not configured. Ask the server owner for the confirmation link.");
+      setView("login");
+    });
   };
+
+  const submitVerify = () => run(async () => {
+    await api.verifyEmail(new URLSearchParams(window.location.search).get("token"));
+    window.history.replaceState({}, "", "/login");
+    setView("login");
+    setNote("Email confirmed. You can sign in now.");
+  });
 
   const submitReset = (e) => {
     e.preventDefault();
@@ -197,6 +214,19 @@ export default function Login({ onSignedIn }) {
               <button className="btn btn-ghost" type="button" onClick={() => go("login")}>Back</button>
             </div>
           </form>
+        )}
+
+        {view === "verify" && (
+          <div className="card stack" style={{ padding: 26, gap: 16 }}>
+            <div className="stack" style={{ gap: 5 }}>
+              <div style={{ fontSize: 16, fontWeight: 600 }}>Confirm your email</div>
+              <div className="muted" style={{ fontSize: 13 }}>Click below to confirm this email address.</div>
+            </div>
+            {error && <div className="err">{error}</div>}
+            <button className="btn" type="button" disabled={busy} onClick={submitVerify}>
+              {busy ? "Confirming…" : "Confirm email"}
+            </button>
+          </div>
         )}
 
         {view === "reset" && (
