@@ -63,6 +63,7 @@ export const api = {
     call(`/api/cases/${id}/explain${ccem ? "" : "?ccem=0"}`, { method: "POST" }),
   signup: (fullName, email, password) =>
     call("/api/signup", json("POST", { fullName, email, password })),
+  verifyEmail: (token) => call(`/api/email/verify?token=${encodeURIComponent(token)}`),
   forgotPassword: (email) => call("/api/password/forgot", json("POST", { email })),
   resetPassword: (token, password) => call("/api/password/reset", json("POST", { token, password })),
 };
