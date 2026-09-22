@@ -58,14 +58,9 @@ function groupByPatient(cases) {
   return [...groups.entries()]
     .map(([patientCode, rows]) => {
       rows.sort((a, b) => (a.eye === b.eye ? 0 : a.eye === "OD" ? -1 : 1));
-      const graded = rows.filter((r) => r.grade != null);
       return {
         patientCode,
         rows,
-        // The doctor's corrected grade is the one that counts where it exists.
-        worst: graded.length
-          ? Math.max(...graded.map((r) => (r.correctedGrade ?? r.grade)))
-          : null,
         latest: Math.max(...rows.map((r) => new Date(r.createdAt).getTime())),
         pending: rows.filter((r) => r.status === "GRADED").length,
       };
@@ -420,14 +415,7 @@ export default function Cases() {
                       style={i === 0 && p !== shown[0] ? { borderTop: "2px solid var(--line-strong)" } : undefined}>
                     <td className="mono">
                       {i === 0 ? (
-                        <span className="row" style={{ gap: 9 }}>
-                          {p.patientCode}
-                          {p.rows.length > 1 && p.worst != null && (
-                            <span className="muted" style={{ fontSize: 11.5 }}>
-                              worse eye {p.worst}
-                            </span>
-                          )}
-                        </span>
+                        <span>{p.patientCode}</span>
                       ) : (
                         <span className="muted" style={{ fontSize: 12 }}>↳ same patient</span>
                       )}
