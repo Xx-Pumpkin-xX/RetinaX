@@ -70,7 +70,6 @@ case "${1:-start}" in
     [ "$NODE_MM" -ge 2205 ] || { echo "!! Node $(node -v 2>/dev/null || echo 'is missing') — need >= 22.5" >&2; exit 1; }
 
     [ -d "$HERE/node_modules" ] || { echo "installing dependencies…"; (cd "$HERE" && npm ci); }
-    [ -f "$VAR_DIR/.vault-open" ] || { echo "!! VAR_DIR is not the mounted vault - refusing to start." >&2; exit 1; }
     mkdir -p "$VAR_DIR"
 
     : > "$TLOG"
@@ -104,9 +103,9 @@ case "${1:-start}" in
       || echo "note: $AI_URL is not answering. The API will still serve every existing case; only new uploads will fail."
 
     API_CMD="NODE_ENV=production PORT=$PORT VAR_DIR='$VAR_DIR' WEB_ORIGIN='$WEB_ORIGIN' \
-       JWT_SECRET='$JWT_SECRET' AI_URL='$AI_URL' SEED_DEMO='${SEED_DEMO:-1}' OLLAMA_URL='${OLLAMA_URL:-}' CHAT_MODEL='${CHAT_MODEL:-}' \
-       API_PROXY_SECRET='${API_PROXY_SECRET:-}' RATE_LOGIN_ACCOUNT_MAX='${RATE_LOGIN_ACCOUNT_MAX:-}' \
-       RESEND_API_KEY='${RESEND_API_KEY:-}' MAIL_FROM='${MAIL_FROM:-}' \
+       JWT_SECRET='$JWT_SECRET' AI_URL='$AI_URL' SEED_DEMO=1 OLLAMA_URL='${OLLAMA_URL:-}' CHAT_MODEL='${CHAT_MODEL:-}' \
+      GMAIL_CLIENT_ID='${GMAIL_CLIENT_ID:-}' GMAIL_CLIENT_SECRET='${GMAIL_CLIENT_SECRET:-}' \
+      GMAIL_REFRESH_TOKEN='${GMAIL_REFRESH_TOKEN:-}' GMAIL_USER='${GMAIL_USER:-}' MAIL_FROM='${MAIL_FROM:-}' \
        node server.js 2>&1 | tee '$LOG'"
     if [ "$HAVE_SESSION" = "1" ]; then
       tmux split-window -t "$SESSION" -c "$HERE" "$API_CMD"
