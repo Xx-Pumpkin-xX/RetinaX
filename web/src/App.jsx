@@ -11,7 +11,6 @@ import ChatbotPopup from "./ChatbotPopup.jsx";
 
 export default function App() {
     const [me, setMe] = useState(undefined); // undefined = still checking
-    const [newCaseDirty, setNewCaseDirty] = useState(false);
     const navigate = useNavigate();
     const location = useLocation();
 
@@ -26,7 +25,7 @@ export default function App() {
     if (location.pathname === "/") {
         return (
             <>
-                <Landing onSignOut={setMe} />
+                <Landing />
                 {me && <ChatbotPopup />}
             </>
         );
@@ -40,7 +39,7 @@ export default function App() {
                         <Eye size={26} />
                     </span>
                     <span className="logo-text logo-text-lg">
-                        RetinaX<span className="logo-dot">.</span>ai
+                             RetinaX<span className="logo-dot">.</span>ai
                     </span>
                 </div>
                 <div className="muted">Preparing your worklist…</div>
@@ -49,9 +48,8 @@ export default function App() {
     }
 
     if (!me) {
-        // /reset carries the token from the emailed link in its query string, so it
-        // must render Login directly — redirecting to /login would drop the token.
-        if (location.pathname === "/login" || location.pathname === "/reset") {
+        // Token links must render Login directly so their query string survives.
+        if (location.pathname === "/login" || location.pathname === "/reset" || location.pathname === "/verify" || location.pathname === "/login/verify") {
             return <Login onSignedIn={setMe} />;
         }
         // Anything else behind the login goes to the sign-in screen — not a blank
@@ -68,23 +66,15 @@ export default function App() {
         navigate("/");
     }
 
-    function goToLanding(e) {
-        if (!newCaseDirty) return;
-        e.preventDefault();
-        if (window.confirm("You have unsaved changes. Leaving this page will discard them. Continue?")) {
-            navigate("/");
-        }
-    }
-
     return (
         <>
             <header className="header">
-                <Link to="/" className="brand" aria-label="RetinX.ai home" onClick={goToLanding}>
+                <Link to="/" className="brand" aria-label="RetinX.ai home">
                     <span className="logo-mark" aria-hidden="true">
-                        <Eye size={20} />
+                            <Eye size={20} />
                     </span>
                     <span className="logo-text">
-                        RetinaX<span className="logo-dot">.</span>ai
+                            RetinaX<span className="logo-dot">.</span>ai
                     </span>
                 </Link>
                 <div className="row" style={{ gap: 14 }}>
@@ -96,7 +86,7 @@ export default function App() {
             </header>
             <Routes>
                 <Route path="/cases" element={<Cases />} />
-                <Route path="/cases/new" element={<NewCase onDirtyChange={setNewCaseDirty} />} />
+                <Route path="/cases/new" element={<NewCase />} />
                 <Route path="/cases/:id" element={<CaseDetail />} />
                 <Route path="*" element={<Navigate to="/cases" replace />} />
             </Routes>
