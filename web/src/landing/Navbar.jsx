@@ -3,13 +3,8 @@ import { Link } from "react-router-dom";
 import { Eye } from "lucide-react";
 import { api } from "../api.js";
 
-const LINKS = [
-  { id: "how-it-works", label: "How It Works" },
-];
-
 export default function Navbar({ onSignOut }) {
   const [scrolled, setScrolled] = useState(false);
-  const [active, setActive] = useState("");
   const [me, setMe] = useState(undefined); // undefined = still checking, null = not signed in
 
   useEffect(() => {
@@ -19,19 +14,10 @@ export default function Navbar({ onSignOut }) {
   useEffect(() => {
     const onScroll = () => {
       setScrolled(window.scrollY > 8);
-      const current = LINKS.map((l) => document.getElementById(l.id))
-        .filter(Boolean)
-        .find((el) => {
-          const rect = el.getBoundingClientRect();
-          return rect.top <= 140 && rect.bottom >= 140;
-        });
-      setActive(current ? current.id : "");
     };
     window.addEventListener("scroll", onScroll);
   }, []);
 
-  const goToSection = (id) =>
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "center" });
 
   async function signOut() {
     await api.logout();
@@ -53,19 +39,23 @@ export default function Navbar({ onSignOut }) {
         </Link>
 
         <nav className="nav-links" aria-label="Main navigation">
-          {LINKS.map((link) => (
-            <button key={link.id} type="button"
-              className={`nav-link ${active === link.id ? "nav-link-active" : ""}`}
-              onClick={() => goToSection(link.id)}>
-              {link.label}
-            </button>
-          ))}
+          {me && (
+            <Link to="/cases">
+              <button className="btn btn-primary btn-sm nav-cta">
+                My cases
+              </button>
+            </Link>
+          )}
           {me ? (
             <button className="btn btn-primary btn-sm nav-cta" onClick={signOut}>
               Sign out
             </button>
           ) : (
-            <Link to="/login" className="btn btn-primary btn-sm nav-cta">Sign in</Link>
+            <Link to="/login">
+              <button className="btn btn-primary btn-sm nav-cta">
+                Sign in
+              </button>
+            </Link>
           )}
         </nav>
       </div>
