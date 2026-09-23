@@ -12,10 +12,10 @@ import ResearchCards from "./ResearchCards.jsx";
  * landing.css, which is scoped to that class so the demo's palette cannot
  * reach the themed application behind the login.
  */
-export default function Landing() {
+export default function Landing({ onSignOut }) {
   return (
     <div className="rx-landing">
-      <Navbar />
+      <Navbar onSignOut={onSignOut} />
       <main>
         <Hero />
         <HowItWorks />
