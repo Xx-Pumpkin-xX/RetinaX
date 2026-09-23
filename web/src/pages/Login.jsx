@@ -11,7 +11,13 @@ export default function Login({ onSignedIn }) {
 
   const [view, setView] = useState(() => {
     const params = new URLSearchParams(window.location.search);
-    return window.location.pathname === "/verify" ? "verify" : params.get("token") ? "reset" : "login";
+    return window.location.pathname === "/verify"
+      ? "verify"
+      : window.location.pathname === "/login/verify"
+        ? "loginVerify"
+        : params.get("token")
+          ? "reset"
+          : "login";
   });
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -49,7 +55,16 @@ export default function Login({ onSignedIn }) {
 
   const submitLogin = (e) => {
     e.preventDefault();
-    run(async () => onSignedIn(await api.login(email, password, keep)));
+    run(async () => {
+      const out = await api.login(email, password, keep);
+      if (out?.verificationRequired) {
+        setNote(out.delivery === "email"
+          ? "We sent a sign-in approval link to your email. Open it on this browser to continue."
+          : "Email is not configured, so the sign-in approval link was not sent. Ask the server owner for the link.");
+        return;
+      }
+      onSignedIn(out);
+    });
   };
 
   const submitForgot = (e) => {
@@ -82,6 +97,12 @@ export default function Login({ onSignedIn }) {
     window.history.replaceState({}, "", "/login");
     setView("login");
     setNote("Email confirmed. You can sign in now.");
+  });
+
+  const submitLoginVerify = () => run(async () => {
+    const out = await api.verifyLogin(new URLSearchParams(window.location.search).get("token"));
+    window.history.replaceState({}, "", "/login");
+    onSignedIn(out);
   });
 
   const submitReset = (e) => {
@@ -225,6 +246,19 @@ export default function Login({ onSignedIn }) {
             {error && <div className="err">{error}</div>}
             <button className="btn" type="button" disabled={busy} onClick={submitVerify}>
               {busy ? "Confirming…" : "Confirm email"}
+            </button>
+          </div>
+        )}
+
+        {view === "loginVerify" && (
+          <div className="card stack" style={{ padding: 26, gap: 16 }}>
+            <div className="stack" style={{ gap: 5 }}>
+              <div style={{ fontSize: 16, fontWeight: 600 }}>Approve this sign-in</div>
+              <div className="muted" style={{ fontSize: 13 }}>Click below to trust this browser for 30 days.</div>
+            </div>
+            {error && <div className="err">{error}</div>}
+            <button className="btn" type="button" disabled={busy} onClick={submitLoginVerify}>
+              {busy ? "Approving…" : "Approve sign-in"}
             </button>
           </div>
         )}
