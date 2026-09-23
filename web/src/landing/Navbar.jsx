@@ -7,7 +7,7 @@ const LINKS = [
   { id: "how-it-works", label: "How It Works" },
 ];
 
-export default function Navbar() {
+export default function Navbar({ onSignOut }) {
   const [scrolled, setScrolled] = useState(false);
   const [active, setActive] = useState("");
   const [me, setMe] = useState(undefined); // undefined = still checking, null = not signed in
@@ -33,6 +33,13 @@ export default function Navbar() {
   const goToSection = (id) =>
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "center" });
 
+  async function signOut() {
+    await api.logout();
+    setMe(null);
+    // update `me` to null in App
+    onSignOut(null);
+  }
+
   return (
     <header className={`navbar ${scrolled ? "navbar-scrolled" : "navbar-transparent"}`}>
       <div className="container navbar-inner">
@@ -54,7 +61,9 @@ export default function Navbar() {
             </button>
           ))}
           {me ? (
-            <Link to="/cases" className="btn btn-primary btn-sm nav-cta">My cases</Link>
+            <button className="btn btn-primary btn-sm nav-cta" onClick={signOut}>
+              Sign out
+            </button>
           ) : (
             <Link to="/login" className="btn btn-primary btn-sm nav-cta">Sign in</Link>
           )}
