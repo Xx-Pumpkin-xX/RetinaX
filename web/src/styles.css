@@ -532,12 +532,20 @@ textarea.input.chatbot-input {
   place-items: center;
   flex-shrink: 0;
 }
+.logo-mark-lg {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+}
 .logo-text {
   color: #101d2d;
   font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
   font-size: 21px;
   font-weight: 700;
   letter-spacing: -0.02em;
+}
+.logo-text-lg {
+  font-size: 28px;
 }
 .logo-dot {
   color: #f08a43;
