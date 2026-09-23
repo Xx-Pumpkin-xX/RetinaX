@@ -11,6 +11,7 @@ import ChatbotPopup from "./ChatbotPopup.jsx";
 
 export default function App() {
     const [me, setMe] = useState(undefined); // undefined = still checking
+    const [newCaseDirty, setNewCaseDirty] = useState(false);
     const navigate = useNavigate();
     const location = useLocation();
 
@@ -25,7 +26,7 @@ export default function App() {
     if (location.pathname === "/") {
         return (
             <>
-                <Landing />
+                <Landing onSignOut={setMe} />
                 {me && <ChatbotPopup />}
             </>
         );
@@ -66,10 +67,18 @@ export default function App() {
         navigate("/");
     }
 
+    function goToLanding(e) {
+        if (!newCaseDirty) return;
+        e.preventDefault();
+        if (window.confirm("You have unsaved changes. Leaving this page will discard them. Continue?")) {
+            navigate("/");
+        }
+    }
+
     return (
         <>
             <header className="header">
-                <Link to="/" className="brand" aria-label="RetinX.ai home">
+                <Link to="/" className="brand" aria-label="RetinX.ai home" onClick={goToLanding}>
                     <span className="logo-mark" aria-hidden="true">
                             <Eye size={20} />
                     </span>
@@ -86,7 +95,7 @@ export default function App() {
             </header>
             <Routes>
                 <Route path="/cases" element={<Cases />} />
-                <Route path="/cases/new" element={<NewCase />} />
+                <Route path="/cases/new" element={<NewCase onDirtyChange={setNewCaseDirty} />} />
                 <Route path="/cases/:id" element={<CaseDetail />} />
                 <Route path="*" element={<Navigate to="/cases" replace />} />
             </Routes>
