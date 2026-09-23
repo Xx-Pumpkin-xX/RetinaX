@@ -26,7 +26,7 @@ export default function App() {
     if (location.pathname === "/") {
         return (
             <>
-                <Landing />
+                <Landing onSignOut={setMe} />
                 {me && <ChatbotPopup />}
             </>
         );
@@ -40,7 +40,7 @@ export default function App() {
                         <Eye size={26} />
                     </span>
                     <span className="logo-text logo-text-lg">
-                             RetinaX<span className="logo-dot">.</span>ai
+                        RetinaX<span className="logo-dot">.</span>ai
                     </span>
                 </div>
                 <div className="muted">Preparing your worklist…</div>
@@ -81,10 +81,10 @@ export default function App() {
             <header className="header">
                 <Link to="/" className="brand" aria-label="RetinX.ai home" onClick={goToLanding}>
                     <span className="logo-mark" aria-hidden="true">
-                            <Eye size={20} />
+                        <Eye size={20} />
                     </span>
                     <span className="logo-text">
-                            RetinaX<span className="logo-dot">.</span>ai
+                        RetinaX<span className="logo-dot">.</span>ai
                     </span>
                 </Link>
                 <div className="row" style={{ gap: 14 }}>
