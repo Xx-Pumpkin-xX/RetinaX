@@ -1,6 +1,7 @@
-// Empty in development (the Vite proxy handles /api). In production set
-// VITE_API_URL to the deployed backend, e.g. https://retinax-api.onrender.com
-const BASE = import.meta.env.VITE_API_URL || "";
+// Production must stay same-origin so the Pages Function can proxy /api and
+// keep the session cookie first-party. A direct API URL makes login appear to
+// work while the browser silently drops the cross-site session cookie.
+const BASE = import.meta.env.PROD ? "" : (import.meta.env.VITE_API_URL || "");
 
 // ngrok's free tier puts an interstitial in front of HTML traffic. JSON and
 // images should not trigger it, but an interstitial on /api/me would look
@@ -64,6 +65,7 @@ export const api = {
   signup: (fullName, email, password) =>
     call("/api/signup", json("POST", { fullName, email, password })),
   verifyEmail: (token) => call(`/api/email/verify?token=${encodeURIComponent(token)}`),
+  verifyLogin: (token) => call(`/api/login/verify?token=${encodeURIComponent(token)}`),
   forgotPassword: (email) => call("/api/password/forgot", json("POST", { email })),
   resetPassword: (token, password) => call("/api/password/reset", json("POST", { token, password })),
 };
