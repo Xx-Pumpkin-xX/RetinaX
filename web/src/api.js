@@ -3,12 +3,12 @@
 // work while the browser silently drops the cross-site session cookie.
 const BASE = import.meta.env.PROD ? "" : (import.meta.env.VITE_API_URL || "");
 
-// ngrok's free tier puts an interstitial in front of HTML traffic. JSON and
-// images should not trigger it, but an interstitial on /api/me would look
-// exactly like a broken login, so the header removes the doubt. Harmless
-// everywhere else. It does make every request preflighted, which is why
-// server.js has to name it in Access-Control-Allow-Headers.
-export const API_HEADERS = { "ngrok-skip-browser-warning": "true" };
+// Headers every API call carries. Empty today: it held ngrok's
+// interstitial-skip header, and the tunnel in front of prts-0 is cloudflared
+// now, which serves the API directly. Kept as the one place to add such a
+// header if the tunnel is ever swapped again - and kept empty on purpose,
+// because a custom header makes every cross-origin request preflighted.
+export const API_HEADERS = {};
 
 const AUTH_PATHS = [
   "/api/login",
@@ -89,6 +89,7 @@ export const api = {
   signup: (fullName, email, password) =>
     call("/api/signup", json("POST", { fullName, email, password })),
   verifyEmail: (token) => call(`/api/email/verify?token=${encodeURIComponent(token)}`),
+  resendVerification: (email) => call("/api/email/resend", json("POST", { email })),
   verifyLogin: (token) => call(`/api/login/verify?token=${encodeURIComponent(token)}`),
   forgotPassword: (email) => call("/api/password/forgot", json("POST", { email })),
   resetPassword: (token, password) => call("/api/password/reset", json("POST", { token, password })),

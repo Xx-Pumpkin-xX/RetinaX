@@ -114,6 +114,15 @@ CREATE TABLE IF NOT EXISTS trusted_devices (
   DoctorID TEXT NOT NULL REFERENCES doctors(DoctorID),
   ExpiresAt TEXT NOT NULL
 );
+-- Sessions ended before their token expired. A JWT is valid until its own
+-- expiry no matter what the server thinks, so signing out can only remove the
+-- cookie - the token itself survives anywhere it was copied. One row per
+-- signed-out session, dropped once the token would have expired anyway, which
+-- is what keeps this table small rather than growing with every sign-out.
+CREATE TABLE IF NOT EXISTS revoked_sessions (
+  TokenID   TEXT PRIMARY KEY,
+  ExpiresAt TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS login_verifications (
   VerifyTokenHash TEXT PRIMARY KEY,
   DoctorID TEXT NOT NULL REFERENCES doctors(DoctorID),
@@ -173,7 +182,8 @@ ensureColumn("login_verifications", "KeepSignedIn", "INTEGER NOT NULL DEFAULT 1"
  */
 const purged =
   db.prepare("DELETE FROM login_verifications WHERE ExpiresAt < ?").run(new Date().toISOString()).changes +
-  db.prepare("DELETE FROM trusted_devices WHERE ExpiresAt < ?").run(new Date().toISOString()).changes;
+  db.prepare("DELETE FROM trusted_devices WHERE ExpiresAt < ?").run(new Date().toISOString()).changes +
+  db.prepare("DELETE FROM revoked_sessions WHERE ExpiresAt < ?").run(new Date().toISOString()).changes;
 if (purged) console.log(`[schema] removed ${purged} expired auth token(s)`);
 
 export const GRADE_LABELS = [

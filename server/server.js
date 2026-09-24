@@ -48,10 +48,10 @@ app.use(cookieParser());
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", WEB_ORIGIN);
   res.setHeader("Access-Control-Allow-Credentials", "true");
-  // ngrok-skip-browser-warning is a custom header, so every request carrying
-  // it is preflighted. Omit it here and the browser rejects the response
-  // before your code ever sees it.
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning");
+  // Only what the client actually sends. Every extra custom header named here
+  // is one the browser may preflight, and one more thing to keep in step with
+  // web/src/api.js.
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
@@ -79,15 +79,26 @@ const upload = multer({
 
 /* ---------------------------------------------------------------- auth --- */
 
+/** Has this exact session been signed out before its token expired? */
+function isRevoked(tokenId) {
+  if (!tokenId) return false;
+  return Boolean(db.prepare("SELECT 1 FROM revoked_sessions WHERE TokenID = ?").get(tokenId));
+}
+
 function auth(req, res, next) {
   const token = req.cookies.rx;
   if (!token) return res.status(401).json({ error: "Not signed in" });
+  let claims;
   try {
-    req.doctorId = jwt.verify(token, SECRET).sub;
-    next();
+    claims = jwt.verify(token, SECRET);
   } catch {
-    res.status(401).json({ error: "Session expired" });
+    return res.status(401).json({ error: "Session expired" });
   }
+  // Checked on every request, because that is the only moment a token copied
+  // out of the browser can be stopped. One indexed lookup on a primary key.
+  if (isRevoked(claims.jti)) return res.status(401).json({ error: "Session expired" });
+  req.doctorId = claims.sub;
+  next();
 }
 
 /**
@@ -122,7 +133,10 @@ function sessionCookieOptions() {
 
 function issueSession(res, doctorId, keepSignedIn) {
   const days = keepSignedIn ? 14 : 1;
-  const token = jwt.sign({ sub: doctorId }, SECRET, { expiresIn: `${days}d` });
+  // jwtid gives the session a name, which is the whole basis for being able to
+  // revoke it later. Tokens issued before this existed simply have no jti and
+  // cannot be revoked; they expire on their own within a fortnight.
+  const token = jwt.sign({ sub: doctorId }, SECRET, { expiresIn: `${days}d`, jwtid: randomUUID() });
   res.cookie("rx", token, {
     ...sessionCookieOptions(),
     maxAge: days * 24 * 60 * 60 * 1000,
@@ -401,7 +415,12 @@ app.post("/api/login", loginIpLimit, loginAccountLimit, async (req, res) => {
     return res.status(401).json({ error: "Wrong email or password" });
   }
   if (!doc.EmailVerified && !DEMO_EMAILS.has(doc.Email)) {
-    return res.status(403).json({ error: "Confirm your email address before signing in" });
+    // The code lets the sign-in screen offer a new confirmation link, which is
+    // the only way out of this state for someone whose first email never came.
+    return res.status(403).json({
+      error: "Confirm your email address before signing in",
+      code: "EMAIL_NOT_VERIFIED",
+    });
   }
 
   if (!DEMO_EMAILS.has(doc.Email) && !hasTrustedDevice(req, doc.DoctorID)) {
@@ -504,7 +523,9 @@ app.post("/api/signup", signupIpLimit, async (req, res) => {
   res.status(201).json({
     id,
     fullName,
-    verificationRequired: true,
+    // A demo address is exempt at sign-in, so telling it to go and confirm
+    // would be an instruction that leads nowhere.
+    verificationRequired: !DEMO_EMAILS.has(email),
     delivery: mailConfigured() ? "email" : "unconfigured",
   });
 });
@@ -522,6 +543,48 @@ app.get("/api/email/verify", verifyIpLimit, (req, res) => {
     "UPDATE doctors SET EmailVerified = 1, VerifyTokenHash = NULL, VerifyTokenExpiry = NULL WHERE DoctorID = ?"
   ).run(doc.DoctorID);
   res.json({ ok: true });
+});
+
+/**
+ * Send the confirmation link again.
+ *
+ * Without this an account whose first email never arrived - spam folder, a
+ * typo in the address, the mail service down for the ten seconds that mattered
+ * - is stuck for good: the link expires in 24 hours and nothing can issue
+ * another. The reset flow already had this problem solved, so this route is
+ * deliberately its twin, limiter for limiter.
+ */
+app.post("/api/email/resend", forgotIpLimit, forgotAccountLimit, async (req, res) => {
+  const email = String(req.body?.email || "").toLowerCase().trim();
+  const doc = email
+    ? db.prepare("SELECT DoctorID, EmailVerified FROM doctors WHERE Email = ?").get(email)
+    : null;
+
+  // Nothing to do for an address with no account, or one already confirmed -
+  // and in both cases the answer below is identical, so neither fact leaks.
+  if (doc && !doc.EmailVerified) {
+    const token = randomBytes(32).toString("hex");
+    const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    db.prepare("UPDATE doctors SET VerifyTokenHash = ?, VerifyTokenExpiry = ? WHERE DoctorID = ?")
+      .run(sha256(token), expires, doc.DoctorID);
+
+    const link = `${WEB_ORIGIN}/verify?token=${token}`;
+    logMailLink("verify resend", email, link, "valid 24 hours");
+
+    await sendMail({
+      to: email,
+      subject: "Confirm your RetinaX.ai email",
+      text: [
+        "Here is your confirmation link again.",
+        "",
+        link,
+        "",
+        "This link expires in 24 hours and replaces any earlier one.",
+      ].join("\n"),
+    });
+  }
+
+  res.json({ ok: true, delivery: mailConfigured() ? "email" : "unconfigured" });
 });
 
 app.get("/api/login/verify", verifyIpLimit, (req, res) => {
@@ -544,12 +607,23 @@ app.get("/api/login/verify", verifyIpLimit, (req, res) => {
 });
 
 app.post("/api/logout", (req, res) => {
-  // Same attributes as when it was issued, or the browser keeps the cookie.
-  //
-  // Note what this does and does not do: it removes the cookie from this
-  // browser. The JWT inside it stays valid until it expires, so a token
-  // already copied elsewhere would still work. Revoking properly needs a
-  // server-side denylist, which is the right thing to add before real users.
+  // Two separate things, and both are needed. Clearing the cookie ends the
+  // session in THIS browser; recording the token's id ends it everywhere,
+  // including in a copy taken out of the browser beforehand. Without the
+  // second, "sign out" is a statement about one screen rather than about the
+  // session. The row is kept only until the token would have expired anyway.
+  const raw = req.cookies.rx;
+  if (raw) {
+    try {
+      const claims = jwt.verify(raw, SECRET);
+      if (claims.jti && claims.exp) {
+        db.prepare("INSERT OR IGNORE INTO revoked_sessions (TokenID, ExpiresAt) VALUES (?,?)")
+          .run(claims.jti, new Date(claims.exp * 1000).toISOString());
+      }
+    } catch {
+      // Already expired or not ours - nothing left to revoke.
+    }
+  }
   res.clearCookie("rx", sessionCookieOptions());
 
   // Signing out is a statement about this machine, so the machine stops being

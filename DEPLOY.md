@@ -33,7 +33,7 @@ Three rules that follow from the table, and save the most time:
 ```
 browser  ->  retinax.pages.dev          Cloudflare Pages: the React build
          ->  /api/*                     a Pages Function proxies it, same-origin
-         ->  API_ORIGIN (ngrok)         the tunnel in front of prts-0
+         ->  API_ORIGIN (cloudflared)   the tunnel in front of prts-0
          ->  prts-0:3000                Express, SQLite, the images
          ->  spark-063e:8000            the model, over Tailscale, only on upload
 ```
@@ -79,7 +79,7 @@ Environment variables, under Settings → Environment variables → **Production
 
 | Variable | Value |
 |---|---|
-| `API_ORIGIN` | the tunnel in front of `prts-0`, e.g. `https://acuteness-finless-pluck.ngrok-free.dev` — **no trailing slash** |
+| `API_ORIGIN` | the tunnel in front of `prts-0`, e.g. `https://<something>.trycloudflare.com` — **no trailing slash**. A cloudflared quick tunnel changes hostname every restart, so this has to be updated and the deployment retried each time. |
 | `API_PROXY_SECRET` | a long random value; set the **same value** in `server/host.env`. It authenticates the client-IP header used by rate limiting. |
 | `VITE_API_URL` | **leave unset** |
 
@@ -334,5 +334,7 @@ automated backup. For a competition build that is a defensible trade, but say it
 plainly if a judge asks; a defended trade-off reads better than a hidden one. The
 cheap improvement is a nightly copy of `$VAR_DIR` to somewhere else on `prts-0`.
 
-**The tunnel hostname is a single point of failure.** If ngrok is down, the site
-cannot reach the API even though the API is fine.
+**The tunnel hostname is a single point of failure.** If the tunnel is down, the
+site cannot reach the API even though the API is fine — and a cloudflared quick
+tunnel also hands out a new hostname whenever it restarts, which looks exactly
+like being down until `API_ORIGIN` is updated and the deployment retried.

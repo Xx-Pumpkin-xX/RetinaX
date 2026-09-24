@@ -6,10 +6,67 @@ Open items first, then what has been resolved.
 
 ## Open
 
-*(nothing outstanding in the application itself — what remains is deployment,
-real demo images, and commit history)*
+### The lesion marks have never been checked by eye
+The six lesion models report counts and the case screen draws marks, but nobody
+has opened a graded case and confirmed a mark sits on the lesion it names. Until
+someone does, the positions are unverified — the numbers are the claim, the
+drawing is decoration. NV in particular is shown as "not assessed" rather than
+"0" because its recall is not credible.
+
+### The tunnel is a single point of failure
+A cloudflared quick tunnel fronts the API and hands out a new hostname every
+time it restarts. Until `API_ORIGIN` in Pages is updated and the deployment
+retried, the site is up and cannot reach its API — which looks like the API
+being down. A named tunnel would fix the hostname; it needs a domain.
+
+### The demo account's password is public
+`DEMO_EMAILS` exempts it from email confirmation and device approval, and the
+landing page fills the password in. That is the point of a demo account, and
+BR-1 keeps it to its own cases, but it is the weakest door in the system and
+the report should say so rather than let a judge find it.
+
+### The vault has no off-machine backup
+Everything under `VAR_DIR` is encrypted and snapshotted, but every copy lives on
+prts-0. Losing that disk loses the lot. A nightly copy elsewhere is cheap and
+has not been set up.
 
 ## Resolved
+
+### Signing out did not actually end the session
+*Fixed 24 Sep 2026.*
+
+Sign-out removed the cookie from the browser and nothing else, so the JWT inside
+it stayed valid until its own expiry — up to 14 days. A token copied out
+beforehand kept working. Sessions now carry an id, sign-out records that id in
+`revoked_sessions`, and `auth` refuses it on every request; the row is dropped
+once the token would have expired anyway, so the table does not grow. Sign-out
+also ends the browser's 30-day device trust, so signing in again from it needs a
+fresh email approval.
+
+Tokens issued before this change have no id and cannot be revoked. They expire
+within a fortnight on their own.
+
+### A patient code could carry the same eye twice
+*Fixed 24 Sep 2026.*
+
+Nothing stopped two cases sharing a patient code and an eye, so one eye could
+end up with two grades and no way to tell which the clinician meant. Patient
+code and birth year are now both required, the eye must be OD or OS, and a
+second image of an eye already on file is refused with 409 `DUPLICATE_EYE`.
+`FAILED` rows are exempt, so retrying an eye whose grading failed still works.
+
+New Case also stopped abandoning good work: when one eye passes the fundus gate
+and the other is refused, the page stays put with the accepted eye saved, and
+only the refused slot is re-sent. A refused image is never graded.
+
+### A signed-out session still showed a name in other tabs
+*Fixed 24 Sep 2026.*
+
+Signing out in one tab left every other tab showing the doctor's name until its
+next click failed. The API now announces a 401, sign-out broadcasts to the other
+tabs, and returning to a tab re-checks the session — all three land on the
+sign-in screen. Where the doctor was going is remembered, so an expired session
+resumes there instead of dumping them on the worklist.
 
 ### Sign-up
 

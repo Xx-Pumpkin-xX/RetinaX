@@ -35,6 +35,22 @@ Ollama bridge (the app-wide assistant needs it; case chat does not):
 
     tmux new -d -s ollama-proxy 'python3 ~/ollama-proxy.py'
 
+## Tunnel
+
+The API is reachable from the internet through a cloudflared quick tunnel. It
+is started by hand and is not managed by `run-on-host.sh`:
+
+    tmux new -d -s cftunnel 'cloudflared tunnel --url http://localhost:3000'
+    tmux capture-pane -pt cftunnel | grep trycloudflare
+
+A quick tunnel gets a **new hostname every time it starts**. When it does, two
+things must be updated or the site cannot reach the API:
+
+    1. Cloudflare Pages -> Settings -> Environment variables -> API_ORIGIN
+       (then Deployments -> Retry deployment, or the old value stays live)
+    2. server/host.env -> PUBLIC_URL, so `run-on-host.sh status` checks the
+       address a browser actually uses
+
 Deploy a new build. prts-0 runs from an unpacked tar, not from git, so
 `git push` alone changes nothing here:
 
@@ -66,10 +82,30 @@ The first request after the machine has been idle can exceed the API's
 45-second timeout while the models load, which surfaces as a case in `FAILED`
 state. That is what the Re-grade button is for.
 
+## Accounts
+
+A new account is created unconfirmed: sign-up emails a link that expires in 24
+hours, and `POST /api/login` answers 403 until it is opened. The sign-in screen
+offers `POST /api/email/resend` when that happens.
+
+Signing in from an unrecognised browser sends an approval link instead, valid
+15 minutes; opening it trusts that browser for 30 days.
+
+Signing out clears the cookie, records the session's token id in
+`revoked_sessions` so a copy of it stops working everywhere, and ends the
+browser's device trust — so the next sign-in from it needs a fresh approval.
+
+`DEMO_EMAILS` in `host.env` lists the accounts exempt from both, so the demo
+can be signed into from any machine in the room. Everything in that list has a
+publicly known password by design - keep it to demo accounts.
+
 ## After a full restart
 
     1. Spark:   bash ai/run-on-dgx.sh
     2. prts-0:  gocryptfs ~/retinax-vault ~/retinax-data
     3. prts-0:  tmux new -d -s ollama-proxy 'python3 ~/ollama-proxy.py'
-    4. prts-0:  bash server/run-on-host.sh start
-    5. check:   bash tools/status.sh
+    4. prts-0:  tmux new -d -s cftunnel 'cloudflared tunnel --url http://localhost:3000'
+    5. prts-0:  bash server/run-on-host.sh start
+    6. update:  the tunnel's new hostname into Pages API_ORIGIN and host.env
+                PUBLIC_URL, then retry the Pages deployment
+    7. check:   bash tools/status.sh

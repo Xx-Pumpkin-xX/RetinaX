@@ -13,8 +13,10 @@
  * CORS stops applying, and the tunnel's browser interstitial cannot appear
  * because the request no longer looks like a browser navigation to it.
  *
- * Set API_ORIGIN in the Pages project (Settings -> Environment variables), e.g.
- * https://acuteness-finless-pluck.ngrok-free.dev — no trailing slash.
+ * Set API_ORIGIN in the Pages project (Settings -> Environment variables) to
+ * the tunnel in front of prts-0 — no trailing slash. A cloudflared quick
+ * tunnel gets a new hostname every time it starts, so this value has to be
+ * updated and the deployment retried whenever the tunnel is restarted.
  */
 export async function onRequest(context) {
   const { request, env } = context;
@@ -34,7 +36,6 @@ export async function onRequest(context) {
   // as the init keeps the body a stream, so a 12 MB fundus upload is not
   // buffered in the worker.
   const proxied = new Request(target, request);
-  proxied.headers.set("ngrok-skip-browser-warning", "true");
   // The API compares Origin against WEB_ORIGIN. Send the site's own origin
   // rather than whatever the browser put there.
   proxied.headers.set("origin", url.origin);

@@ -14,7 +14,7 @@
 #   WEB_ORIGIN=https://retinax.pages.dev         exact, no trailing slash
 #   JWT_SECRET=<openssl rand -hex 32>
 #   AI_URL=http://localhost:8000                 the model, privately
-#   NGROK_DOMAIN=acuteness-finless-pluck.ngrok-free.dev
+#   PUBLIC_URL=https://<the tunnel hostname>      for the status check only
 #
 # Reaching the model privately is the point: /infer has no authentication of
 # its own, so it should not be on the open internet. Two ways, either is fine:
@@ -36,10 +36,19 @@ TLOG="$HERE/tunnel.log"
 # shellcheck disable=SC1091
 [ -f "$HERE/host.env" ] && set -a && . "$HERE/host.env" && set +a
 
-public_url() { [ -n "${NGROK_DOMAIN:-}" ] && echo "https://$NGROK_DOMAIN"; }
+# The public address of the API, for the status check only - nothing here
+# starts the tunnel. cloudflared is run by hand in its own tmux session and
+# hands out a new hostname each time, so PUBLIC_URL is written into host.env
+# after starting it. NGROK_DOMAIN is the older reserved-domain form.
+public_url() {
+  if   [ -n "${PUBLIC_URL:-}" ];   then echo "${PUBLIC_URL%/}"
+  elif [ -n "${NGROK_DOMAIN:-}" ]; then echo "https://$NGROK_DOMAIN"
+  else return 1
+  fi
+}
 
 case "${1:-start}" in
-  url) public_url || { echo "NGROK_DOMAIN is not set"; exit 1; } ;;
+  url) public_url || { echo "PUBLIC_URL is not set in host.env"; exit 1; } ;;
 
   logs) tail -n 60 -f "$LOG" ;;
 
@@ -52,7 +61,7 @@ case "${1:-start}" in
     echo -n "model: "; curl -s -m 8 "${AI_URL:-http://localhost:8000}/health" \
       || echo "(unreachable — check the tunnel, or Tailscale on both ends)"; echo
     U="$(public_url || true)"
-    [ -n "$U" ] && { echo -n "public: "; curl -s -m 15 -H 'ngrok-skip-browser-warning: 1' "$U/api/health" || echo "(no answer)"; echo; }
+    [ -n "$U" ] && { echo -n "public: "; curl -s -m 15 "$U/api/health" || echo "(no answer)"; echo; }
     ;;
 
   start)

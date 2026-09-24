@@ -22,6 +22,9 @@ export default function Login({ onSignedIn }) {
   const [password, setPassword] = useState("");
   const [keep, setKeep] = useState(true);
   const [error, setError] = useState(null);
+  // Set when the server refuses the sign-in because the address was never
+  // confirmed. It is the only failure here the doctor can act on themselves.
+  const [unconfirmed, setUnconfirmed] = useState(false);
   const [note, setNote] = useState(() =>
     location.state?.reason === "upload"
       ? "You need to log in first before using our product. If you haven't had an account yet, please sign up."
@@ -37,19 +40,30 @@ export default function Login({ onSignedIn }) {
     setView(next);
     setError(null);
     setNote(null);
+    setUnconfirmed(false);
   }
 
   async function run(fn) {
     setBusy(true);
     setError(null);
+    setUnconfirmed(false);
     try {
       await fn();
     } catch (err) {
       setError(err.message);
+      if (err.code === "EMAIL_NOT_VERIFIED") setUnconfirmed(true);
     } finally {
       setBusy(false);
     }
   }
+
+  const resend = () =>
+    run(async () => {
+      const out = await api.resendVerification(email);
+      setNote(out?.delivery === "email"
+        ? "A new confirmation link is on its way. It expires in 24 hours."
+        : "This build has no email provider configured, so no link was sent. Ask the server owner for it.");
+    });
 
   const submitLogin = (e) => {
     e.preventDefault();
@@ -184,6 +198,11 @@ export default function Login({ onSignedIn }) {
             </label>
 
             {error && <div className="err">{error}</div>}
+            {unconfirmed && (
+              <button type="button" className="linkish" disabled={busy} onClick={resend}>
+                Send the confirmation email again
+              </button>
+            )}
             {note && <div className="note">{note}</div>}
 
             <button className="btn" type="submit" disabled={busy}>
