@@ -29,7 +29,16 @@ import {
 const PORT = process.env.PORT || 3000;
 const SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
 const WEB_ORIGIN = process.env.WEB_ORIGIN || "http://localhost:5173";
-const DEMO_EMAILS = new Set(["quang@retinax.ai", "ha@retinax.ai"]);
+// The accounts that skip email confirmation and device approval, so the demo
+// can be signed into from any machine in the room. Read from the environment
+// rather than written here: a hard-coded list in a public repository tells a
+// reader exactly which accounts have the weakest door.
+const DEMO_EMAILS = new Set(
+  String(process.env.DEMO_EMAILS || "quang@retinax.ai")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean)
+);
 
 const app = express();
 app.use(express.json());
@@ -124,6 +133,20 @@ const DEVICE_COOKIE = "rx_device";
 const DEVICE_DAYS = 30;
 const LOGIN_VERIFY_MINUTES = 15;
 
+/**
+ * A link carries a working token. In production it goes to the mail service and
+ * nowhere else: printed here it lands in api.log, which sits beside the vault
+ * rather than inside it, and stays readable long after the link expires. In
+ * development the link on the console is how you sign in without a mailbox.
+ */
+function logMailLink(label, email, link, validity) {
+  console.log(
+    process.env.NODE_ENV === "production"
+      ? `[${label}] ${email} - link sent (${validity})`
+      : `[${label}] ${email} -> ${link} (${validity})`
+  );
+}
+
 function issueTrustedDevice(res, doctorId) {
   const deviceToken = randomBytes(32).toString("hex");
   const expires = new Date(Date.now() + DEVICE_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -197,6 +220,18 @@ const forgotAccountLimit = createRateLimiter({
   limit: envInt("RATE_FORGOT_ACCOUNT_MAX", 5),
   key: emailKey,
   message: "Too many password reset requests for this address. Try again later.",
+});
+
+// Both confirmation links are unauthenticated GETs that query the database on
+// every hit. The tokens are 32 random bytes, so guessing one is not the worry;
+// an unmetered public route is. Generous, because a whole room can share one
+// client IP behind the proxy.
+const verifyIpLimit = createRateLimiter({
+  name: "verify-link",
+  windowMs: 15 * MINUTE,
+  limit: envInt("RATE_VERIFY_IP_MAX", 120),
+  key: clientIpKey,
+  message: "Too many confirmation attempts. Try again later.",
 });
 
 const resetIpLimit = createRateLimiter({
@@ -373,10 +408,10 @@ app.post("/api/login", loginIpLimit, loginAccountLimit, async (req, res) => {
     const verifyToken = randomBytes(32).toString("hex");
     const expires = new Date(Date.now() + LOGIN_VERIFY_MINUTES * 60 * 1000).toISOString();
     db.prepare("DELETE FROM login_verifications WHERE DoctorID = ?").run(doc.DoctorID);
-    db.prepare("INSERT INTO login_verifications (VerifyTokenHash, DoctorID, ExpiresAt) VALUES (?,?,?)")
-      .run(sha256(verifyToken), doc.DoctorID, expires);
+    db.prepare("INSERT INTO login_verifications (VerifyTokenHash, DoctorID, ExpiresAt, KeepSignedIn) VALUES (?,?,?,?)")
+      .run(sha256(verifyToken), doc.DoctorID, expires, keepSignedIn ? 1 : 0);
     const link = `${WEB_ORIGIN}/login/verify?token=${verifyToken}`;
-    console.log(`[login verify] ${doc.Email} -> ${link} (valid ${LOGIN_VERIFY_MINUTES} min)`);
+    logMailLink("login verify", doc.Email, link, `valid ${LOGIN_VERIFY_MINUTES} min`);
     await sendMail({
       to: doc.Email,
       subject: "Approve this RetinaX.ai sign-in",
@@ -446,7 +481,7 @@ app.post("/api/signup", signupIpLimit, async (req, res) => {
   );
 
   const verifyLink = `${WEB_ORIGIN}/verify?token=${verifyToken}`;
-  console.log(`[verify] ${email} -> ${verifyLink} (valid 24 hours)`);
+  logMailLink("verify", email, verifyLink, "valid 24 hours");
   await sendMail({
     to: email,
     subject: "Confirm your RetinaX.ai email",
@@ -474,7 +509,7 @@ app.post("/api/signup", signupIpLimit, async (req, res) => {
   });
 });
 
-app.get("/api/email/verify", (req, res) => {
+app.get("/api/email/verify", verifyIpLimit, (req, res) => {
   const token = String(req.query?.token || "");
   const doc = token
     ? db.prepare("SELECT * FROM doctors WHERE VerifyTokenHash = ?").get(sha256(token))
@@ -489,7 +524,7 @@ app.get("/api/email/verify", (req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/api/login/verify", (req, res) => {
+app.get("/api/login/verify", verifyIpLimit, (req, res) => {
   const token = String(req.query?.token || "");
   const verification = token
     ? db.prepare("SELECT * FROM login_verifications WHERE VerifyTokenHash = ?").get(sha256(token))
@@ -502,7 +537,9 @@ app.get("/api/login/verify", (req, res) => {
   const doctor = db.prepare("SELECT DoctorID, FullName FROM doctors WHERE DoctorID = ?").get(verification.DoctorID);
   if (!doctor) return res.status(400).json({ error: "This login link is no longer valid." });
   issueTrustedDevice(res, doctor.DoctorID);
-  issueSession(res, doctor.DoctorID, true);
+  // The length of the session was the doctor's choice on the sign-in form, not
+  // something approving the link should decide for them.
+  issueSession(res, doctor.DoctorID, Boolean(verification.KeepSignedIn));
   res.json({ id: doctor.DoctorID, fullName: doctor.FullName });
 });
 
@@ -514,6 +551,16 @@ app.post("/api/logout", (req, res) => {
   // already copied elsewhere would still work. Revoking properly needs a
   // server-side denylist, which is the right thing to add before real users.
   res.clearCookie("rx", sessionCookieOptions());
+
+  // Signing out is a statement about this machine, so the machine stops being
+  // trusted: the row goes, and the next sign-in from here asks for approval by
+  // email again. Leaving it would keep a borrowed laptop trusted for 30 days
+  // after the doctor thought they had left.
+  const deviceToken = req.cookies[DEVICE_COOKIE];
+  if (deviceToken) {
+    db.prepare("DELETE FROM trusted_devices WHERE DeviceTokenHash = ?").run(sha256(deviceToken));
+    res.clearCookie(DEVICE_COOKIE, sessionCookieOptions());
+  }
   res.sendStatus(204);
 });
 
@@ -541,7 +588,7 @@ app.post("/api/password/forgot", forgotIpLimit, forgotAccountLimit, async (req, 
     // Logged either way. When mail is configured this is the audit trail for a
     // reset that was requested; when it is not, it is the only way to complete
     // one, and someone running the demo needs to be able to find it.
-    console.log(`[reset] ${email} -> ${link} (valid ${RESET_MINUTES} min)`);
+    logMailLink("reset", email, link, `valid ${RESET_MINUTES} min`);
 
     await sendMail({
       to: email,

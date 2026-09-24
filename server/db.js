@@ -117,7 +117,8 @@ CREATE TABLE IF NOT EXISTS trusted_devices (
 CREATE TABLE IF NOT EXISTS login_verifications (
   VerifyTokenHash TEXT PRIMARY KEY,
   DoctorID TEXT NOT NULL REFERENCES doctors(DoctorID),
-  ExpiresAt TEXT NOT NULL
+  ExpiresAt TEXT NOT NULL,
+  KeepSignedIn INTEGER NOT NULL DEFAULT 1
 );
 `);
 
@@ -160,6 +161,20 @@ ensureColumn("predictions", "Lesions", "TEXT");
 ensureColumn("doctors", "EmailVerified", "INTEGER NOT NULL DEFAULT 1");
 ensureColumn("doctors", "VerifyTokenHash", "TEXT");
 ensureColumn("doctors", "VerifyTokenExpiry", "TEXT");
+// Whether the doctor ticked "keep me signed in" on the sign-in that asked for
+// this approval. Without it the approval link always issued the long session,
+// which is the opposite of a choice.
+ensureColumn("login_verifications", "KeepSignedIn", "INTEGER NOT NULL DEFAULT 1");
+
+/**
+ * Expired approval links and device trusts are only ever deleted when they are
+ * used, so an unused one lives forever. Nothing reads them once past their
+ * date; they are just a growing list of hashes tied to real accounts.
+ */
+const purged =
+  db.prepare("DELETE FROM login_verifications WHERE ExpiresAt < ?").run(new Date().toISOString()).changes +
+  db.prepare("DELETE FROM trusted_devices WHERE ExpiresAt < ?").run(new Date().toISOString()).changes;
+if (purged) console.log(`[schema] removed ${purged} expired auth token(s)`);
 
 export const GRADE_LABELS = [
   "No DR",
