@@ -85,9 +85,7 @@ export default function Login({ onSignedIn }) {
     run(async () => {
       const out = await api.signup(fullName, email, password);
       setEmail(email);
-      setNote(out?.delivery === "email"
-        ? "Check your email for a confirmation link before signing in."
-        : "Your account was created, but email is not configured. Ask the server owner for the confirmation link.");
+      setNote("Your account was created. Sign in to confirm this browser and continue.");
       setView("login");
     });
   };
