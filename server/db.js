@@ -109,6 +109,16 @@ CREATE TABLE IF NOT EXISTS auth_attempts (
   WindowStartedAt TEXT NOT NULL,
   Attempts INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS trusted_devices (
+  DeviceTokenHash TEXT PRIMARY KEY,
+  DoctorID TEXT NOT NULL REFERENCES doctors(DoctorID),
+  ExpiresAt TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS login_verifications (
+  VerifyTokenHash TEXT PRIMARY KEY,
+  DoctorID TEXT NOT NULL REFERENCES doctors(DoctorID),
+  ExpiresAt TEXT NOT NULL
+);
 `);
 
 /**

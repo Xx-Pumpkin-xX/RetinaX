@@ -3,10 +3,13 @@ const GMAIL_CLIENT_SECRET = process.env.GMAIL_CLIENT_SECRET || "";
 const GMAIL_REFRESH_TOKEN = process.env.GMAIL_REFRESH_TOKEN || "";
 const GMAIL_USER = process.env.GMAIL_USER || "";
 const MAIL_FROM = process.env.MAIL_FROM || GMAIL_USER;
+const MAIL_TIMEOUT_MS = 150 * 1000;
 
-export const isConfigured = () => Boolean(
+const gmailConfigured = () => Boolean(
   GMAIL_CLIENT_ID && GMAIL_CLIENT_SECRET && GMAIL_REFRESH_TOKEN && GMAIL_USER && MAIL_FROM
 );
+
+export const isConfigured = () => gmailConfigured();
 
 async function accessToken() {
   const res = await fetch("https://oauth2.googleapis.com/token", {
@@ -18,7 +21,7 @@ async function accessToken() {
       refresh_token: GMAIL_REFRESH_TOKEN,
       grant_type: "refresh_token",
     }),
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(MAIL_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`Google OAuth returned ${res.status}`);
   return (await res.json()).access_token;
@@ -57,7 +60,7 @@ export async function sendMail({ to, subject, text }) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ raw: rawMessage({ to, subject, text }) }),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(MAIL_TIMEOUT_MS),
       }
     );
     if (!res.ok) {

@@ -8,6 +8,7 @@
  */
 import bcrypt from "bcryptjs";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { db } from "./db.js";
 
 const doctors = [
@@ -40,4 +41,4 @@ export function seedDoctors({ quiet = false } = {}) {
 }
 
 // Run directly rather than imported.
-if (import.meta.url === `file://${process.argv[1]}`) seedDoctors();
+if (fileURLToPath(import.meta.url) === process.argv[1]) seedDoctors();

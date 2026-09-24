@@ -52,7 +52,7 @@ case "${1:-start}" in
     echo -n "model: "; curl -s -m 8 "${AI_URL:-http://localhost:8000}/health" \
       || echo "(unreachable — check the tunnel, or Tailscale on both ends)"; echo
     U="$(public_url || true)"
-    [ -n "$U" ] && { echo -n "public: "; curl -s -m 15 -H 'ngrok-skip-browser-warning: 1' "$U/api/cases" || echo "(no answer)"; echo; }
+    [ -n "$U" ] && { echo -n "public: "; curl -s -m 15 -H 'ngrok-skip-browser-warning: 1' "$U/api/health" || echo "(no answer)"; echo; }
     ;;
 
   start)
@@ -88,7 +88,7 @@ case "${1:-start}" in
       echo -n "opening the ssh tunnel to $AI_SSH"
       for _ in $(seq 1 10); do
         sleep 1
-        curl -s -m 2 "http://localhost:$RP/health" >/dev/null 2>&1 && break
+        curl -s -m 2 "http://localhost:$RP/api/health" >/dev/null 2>&1 && break
         printf .
       done
       echo

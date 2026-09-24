@@ -29,6 +29,7 @@ import {
 const PORT = process.env.PORT || 3000;
 const SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
 const WEB_ORIGIN = process.env.WEB_ORIGIN || "http://localhost:5173";
+const DEMO_EMAILS = new Set(["quang@retinax.ai", "ha@retinax.ai"]);
 
 const app = express();
 app.use(express.json());
@@ -119,10 +120,34 @@ function issueSession(res, doctorId, keepSignedIn) {
   });
 }
 
+const DEVICE_COOKIE = "rx_device";
+const DEVICE_DAYS = 30;
+const LOGIN_VERIFY_MINUTES = 15;
+
+function issueTrustedDevice(res, doctorId) {
+  const deviceToken = randomBytes(32).toString("hex");
+  const expires = new Date(Date.now() + DEVICE_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  db.prepare("INSERT INTO trusted_devices (DeviceTokenHash, DoctorID, ExpiresAt) VALUES (?,?,?)")
+    .run(sha256(deviceToken), doctorId, expires);
+  res.cookie(DEVICE_COOKIE, deviceToken, {
+    ...sessionCookieOptions(),
+    maxAge: DEVICE_DAYS * 24 * 60 * 60 * 1000,
+  });
+}
+
+function hasTrustedDevice(req, doctorId) {
+  const token = req.cookies[DEVICE_COOKIE];
+  if (!token) return false;
+  const device = db.prepare("SELECT * FROM trusted_devices WHERE DeviceTokenHash = ? AND DoctorID = ?")
+    .get(sha256(token), doctorId);
+  return Boolean(device && new Date(device.ExpiresAt) >= new Date());
+}
+
 /* ---------------------------------------------------------- rate limits --- */
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
+const MAIL_WINDOW = 150 * 1000;
 
 // Public/auth routes get both a broad client-IP cap and, where useful, a
 // per-identifier cap. The second one is what stops a targeted password attack
@@ -152,7 +177,7 @@ const loginAccountLimit = createRateLimiter({
 
 const signupIpLimit = createRateLimiter({
   name: "signup",
-  windowMs: HOUR,
+  windowMs: MAIL_WINDOW,
   limit: envInt("RATE_SIGNUP_IP_MAX", 20),
   key: clientIpKey,
   message: "Too many account creation attempts. Try again later.",
@@ -160,7 +185,7 @@ const signupIpLimit = createRateLimiter({
 
 const forgotIpLimit = createRateLimiter({
   name: "password-forgot-ip",
-  windowMs: HOUR,
+  windowMs: MAIL_WINDOW,
   limit: envInt("RATE_FORGOT_IP_MAX", 50),
   key: clientIpKey,
   message: "Too many password reset requests. Try again later.",
@@ -168,7 +193,7 @@ const forgotIpLimit = createRateLimiter({
 
 const forgotAccountLimit = createRateLimiter({
   name: "password-forgot-account",
-  windowMs: HOUR,
+  windowMs: MAIL_WINDOW,
   limit: envInt("RATE_FORGOT_ACCOUNT_MAX", 5),
   key: emailKey,
   message: "Too many password reset requests for this address. Try again later.",
@@ -299,7 +324,8 @@ const ccemExplainLimit = createRateLimiter({
  * For that same reason it says nothing an attacker could use: no counts, no
  * file paths, no hostnames, no configuration values. Only booleans and a
  * duration. `model` is the one that matters — the API stays up and serves every
- * existing case when the grading service is down; only new uploads fail.
+ * existing case when th.
+ * e grading service is down; only new uploads fail.
  */
 app.get("/api/health", healthIpLimit, async (_req, res) => {
   let model = false;
@@ -331,13 +357,40 @@ app.get("/api/health", healthIpLimit, async (_req, res) => {
   });
 });
 
-app.post("/api/login", loginIpLimit, loginAccountLimit, (req, res) => {
+app.post("/api/login", loginIpLimit, loginAccountLimit, async (req, res) => {
   const { email, password, keepSignedIn } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: "Email and password are required" });
 
   const doc = db.prepare("SELECT * FROM doctors WHERE Email = ?").get(String(email).toLowerCase().trim());
   if (!doc || !bcrypt.compareSync(password, doc.PasswordHash)) {
     return res.status(401).json({ error: "Wrong email or password" });
+  }
+  if (!doc.EmailVerified && !DEMO_EMAILS.has(doc.Email)) {
+    return res.status(403).json({ error: "Confirm your email address before signing in" });
+  }
+
+  if (!DEMO_EMAILS.has(doc.Email) && !hasTrustedDevice(req, doc.DoctorID)) {
+    const verifyToken = randomBytes(32).toString("hex");
+    const expires = new Date(Date.now() + LOGIN_VERIFY_MINUTES * 60 * 1000).toISOString();
+    db.prepare("DELETE FROM login_verifications WHERE DoctorID = ?").run(doc.DoctorID);
+    db.prepare("INSERT INTO login_verifications (VerifyTokenHash, DoctorID, ExpiresAt) VALUES (?,?,?)")
+      .run(sha256(verifyToken), doc.DoctorID, expires);
+    const link = `${WEB_ORIGIN}/login/verify?token=${verifyToken}`;
+    console.log(`[login verify] ${doc.Email} -> ${link} (valid ${LOGIN_VERIFY_MINUTES} min)`);
+    await sendMail({
+      to: doc.Email,
+      subject: "Approve this RetinaX.ai sign-in",
+      text: [
+        "A sign-in to your RetinaX.ai account was requested from a new browser or device.",
+        "",
+        "Approve it with this link:",
+        link,
+        "",
+        `This link expires in ${LOGIN_VERIFY_MINUTES} minutes. If this was not you, ignore this email.`,
+      ].join("\n"),
+    });
+    loginAccountLimit.reset(req);
+    return res.json({ verificationRequired: true, delivery: mailConfigured() ? "email" : "unconfigured" });
   }
 
   issueSession(res, doc.DoctorID, keepSignedIn);
@@ -375,14 +428,37 @@ app.post("/api/signup", signupIpLimit, async (req, res) => {
   if (taken) return res.status(409).json({ error: "That email already has an account" });
 
   const id = randomUUID();
+  const verifyToken = randomBytes(32).toString("hex");
+  const verifyExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
   db.prepare(
-    `INSERT INTO doctors (DoctorID, FullName, Email, PasswordHash, CreatedAt)
-     VALUES (?,?,?,?,?)`
-  ).run(id, fullName, email, bcrypt.hashSync(password, 10), new Date().toISOString());
+    `INSERT INTO doctors
+       (DoctorID, FullName, Email, PasswordHash, EmailVerified, VerifyTokenHash, VerifyTokenExpiry, CreatedAt)
+     VALUES (?,?,?,?,?,?,?,?)`
+  ).run(
+    id,
+    fullName,
+    email,
+    bcrypt.hashSync(password, 10),
+    0,
+    sha256(verifyToken),
+    verifyExpiry,
+    new Date().toISOString()
+  );
 
-  // Sign them straight in — making someone type the password again immediately
-  // after choosing it is friction with no security value.
-  issueSession(res, id, false);
+  const verifyLink = `${WEB_ORIGIN}/verify?token=${verifyToken}`;
+  console.log(`[verify] ${email} -> ${verifyLink} (valid 24 hours)`);
+  await sendMail({
+    to: email,
+    subject: "Confirm your RetinaX.ai email",
+    text: [
+      "Welcome to RetinaX.ai.",
+      "",
+      "Confirm your email address with this link:",
+      verifyLink,
+      "",
+      "This link expires in 24 hours.",
+    ].join("\n"),
+  });
 
   // A new account starts EMPTY, deliberately. Seeding it with sample cases was
   // friendlier to a judge browsing unattended, but it showed a doctor four
@@ -390,7 +466,44 @@ app.post("/api/signup", signupIpLimit, async (req, res) => {
   // history and undermines the one claim the project rests on. The demo account
   // is where the pre-graded cases live; a real account starts where a real
   // doctor starts.
-  res.status(201).json({ id, fullName });
+  res.status(201).json({
+    id,
+    fullName,
+    verificationRequired: true,
+    delivery: mailConfigured() ? "email" : "unconfigured",
+  });
+});
+
+app.get("/api/email/verify", (req, res) => {
+  const token = String(req.query?.token || "");
+  const doc = token
+    ? db.prepare("SELECT * FROM doctors WHERE VerifyTokenHash = ?").get(sha256(token))
+    : null;
+  if (!doc || !doc.VerifyTokenExpiry || new Date(doc.VerifyTokenExpiry) < new Date()) {
+    return res.status(400).json({ error: "This confirmation link has expired. Request a new one." });
+  }
+
+  db.prepare(
+    "UPDATE doctors SET EmailVerified = 1, VerifyTokenHash = NULL, VerifyTokenExpiry = NULL WHERE DoctorID = ?"
+  ).run(doc.DoctorID);
+  res.json({ ok: true });
+});
+
+app.get("/api/login/verify", (req, res) => {
+  const token = String(req.query?.token || "");
+  const verification = token
+    ? db.prepare("SELECT * FROM login_verifications WHERE VerifyTokenHash = ?").get(sha256(token))
+    : null;
+  if (!verification || new Date(verification.ExpiresAt) < new Date()) {
+    return res.status(400).json({ error: "This login link has expired. Sign in again to request a new one." });
+  }
+
+  db.prepare("DELETE FROM login_verifications WHERE VerifyTokenHash = ?").run(verification.VerifyTokenHash);
+  const doctor = db.prepare("SELECT DoctorID, FullName FROM doctors WHERE DoctorID = ?").get(verification.DoctorID);
+  if (!doctor) return res.status(400).json({ error: "This login link is no longer valid." });
+  issueTrustedDevice(res, doctor.DoctorID);
+  issueSession(res, doctor.DoctorID, true);
+  res.json({ id: doctor.DoctorID, fullName: doctor.FullName });
 });
 
 app.post("/api/logout", (req, res) => {
