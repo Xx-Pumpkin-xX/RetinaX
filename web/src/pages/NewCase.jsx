@@ -20,13 +20,20 @@ export default function NewCase({ onDirtyChange }) {
   const [images, setImages] = useState({ OD: null, OS: null });
   const [previews, setPreviews] = useState({ OD: null, OS: null });
   const [progress, setProgress] = useState({});     // eye -> "grading" | "done" | error text
+  const [saved, setSaved] = useState({});           // eye -> the case the server created
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
 
   // Có dữ liệu chưa lưu nếu đã gõ patient code / birth year, hoặc đã chọn ảnh cho ít nhất 1 mắt.
-  const dirty = Boolean(
+  const typed = Boolean(
     form.patientCode.trim() || form.birthYear.trim() || images.OD || images.OS
+  );
+  // A graded eye is on the server, not unsaved work. What is still unsaved is a
+  // chosen photograph the server has not taken.
+  const dirty = typed && (
+    !(saved.OD || saved.OS) ||
+    Boolean((images.OD && !saved.OD) || (images.OS && !saved.OS))
   );
 
   // Đóng tab / reload / gõ URL khác / rời website — trình duyệt tự hỏi xác nhận.
@@ -46,11 +53,16 @@ export default function NewCase({ onDirtyChange }) {
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const chosen = EYES.filter((e) => images[e.key]);
+  const savedCases = EYES.map((e) => saved[e.key]).filter(Boolean);
+  // Once an eye is graded the patient details belong to a saved case; editing
+  // them here would describe that case wrongly.
+  const locked = savedCases.length > 0;
+  const rejected = EYES.filter((e) => images[e.key] && !saved[e.key]);
 
   function pick(eye) {
     return (e) => {
       const f = e.target.files?.[0];
-      if (!f) return;
+      if (!f || saved[eye]) return;
       setImages((p) => ({ ...p, [eye]: f }));
       setPreviews((p) => ({ ...p, [eye]: URL.createObjectURL(f) }));
       setProgress((p) => ({ ...p, [eye]: undefined }));
@@ -58,9 +70,17 @@ export default function NewCase({ onDirtyChange }) {
   }
 
   function clear(eye) {
+    if (saved[eye]) return;
     setImages((p) => ({ ...p, [eye]: null }));
     setPreviews((p) => ({ ...p, [eye]: null }));
     setProgress((p) => ({ ...p, [eye]: undefined }));
+  }
+
+  function openResults(list) {
+    if (list.length === 1) return navigate(`/cases/${list[0].id}`);
+    navigate(`/cases/${list[0].id}`, {
+      state: { resultQueue: list.map((c) => c.id), resultStep: 0 },
+    });
   }
 
   async function submit(e) {
@@ -69,15 +89,18 @@ export default function NewCase({ onDirtyChange }) {
     setBusy(true);
     setError(null);
 
-    const created = [];
+    // Eyes already graded are not sent again: re-posting one would be a second
+    // case for the same eye, which the server refuses anyway.
+    const next = { ...saved };
     for (const { key } of chosen) {
+      if (next[key]) continue;
       setProgress((p) => ({ ...p, [key]: "grading" }));
       const fd = new FormData();
       Object.entries(form).forEach(([k, v]) => fd.append(k, v));
       fd.append("eyePosition", key);
       fd.append("image", images[key]);
       try {
-        created.push(await api.createCase(fd));
+        next[key] = await api.createCase(fd);
         setProgress((p) => ({ ...p, [key]: "done" }));
       } catch (err) {
         // One eye failing must not discard the other. Report it against the eye
@@ -85,23 +108,22 @@ export default function NewCase({ onDirtyChange }) {
         setProgress((p) => ({ ...p, [key]: err.message }));
       }
     }
+    setSaved(next);
+    setBusy(false);
 
-    if (created.length === 0) {
-      setError("Nothing was saved. Check the grading service is running.");
-      setBusy(false);
+    const done = EYES.map((e) => next[e.key]).filter(Boolean);
+    if (done.length === 0) {
+      setError("Nothing was saved. Read the message under each eye, or check the grading service is running.");
       return;
     }
-
-    // One eye uploaded → straight to its result. Two eyes → walk the doctor
-    // through each result in turn (see CaseDetail's "Next eye's result"),
-    // rather than dropping them on the worklist after the first one.
-    if (created.length === 1) {
-      navigate(`/cases/${created[0].id}`);
-    } else {
-      navigate(`/cases/${created[0].id}`, {
-        state: { resultQueue: created.map((c) => c.id), resultStep: 0 },
-      });
+    // A photograph the model would not accept is never graded, so the doctor
+    // stays here with the other eye already safe and can put a different
+    // photograph in the slot that was refused.
+    if (done.length < chosen.length) {
+      setError("One eye was not accepted. Replace that photograph and press upload again, or continue with what is saved.");
+      return;
     }
+    openResults(done);
   }
 
   function goToCases(e) {
@@ -125,12 +147,13 @@ export default function NewCase({ onDirtyChange }) {
             <div className="stack" style={{ gap: 6 }}>
               <label className="label" htmlFor="pc">Patient code</label>
               <input id="pc" className="input mono" value={form.patientCode} onChange={set("patientCode")}
-                     placeholder="VN-0412" required />
+                     placeholder="VN-0412" required disabled={locked} />
             </div>
             <div className="stack" style={{ gap: 6 }}>
               <label className="label" htmlFor="by">Birth year</label>
               <input id="by" className="input mono" value={form.birthYear} onChange={set("birthYear")}
-                     placeholder="1968" inputMode="numeric" />
+                     placeholder="1968" inputMode="numeric" pattern="\d{4}" maxLength={4}
+                     title="Four digits, e.g. 1968" required disabled={locked} />
             </div>
             <div className="stack" style={{ gap: 6 }}>
               <label className="label">Sex</label>
@@ -147,7 +170,8 @@ export default function NewCase({ onDirtyChange }) {
             <span aria-hidden="true">ⓘ</span>
             <div>
               Each eye is graded on its own, so each photograph becomes its own
-              case. Add one eye or both — the patient details are shared.
+              case. Add one eye or both — the patient details are shared. A
+              patient code carries at most one right and one left eye.
             </div>
           </div>
         </div>
@@ -160,21 +184,29 @@ export default function NewCase({ onDirtyChange }) {
                   <span style={{ fontWeight: 600, fontSize: 14.5 }}>{label}</span>
                   <span className="mono muted" style={{ fontSize: 12 }}>{sub}</span>
                 </div>
-                {images[key] && !busy && (
-                  <button type="button" className="linkish" onClick={() => clear(key)}>Remove</button>
-                )}
+                {saved[key]
+                  ? <Link className="linkish" to={`/cases/${saved[key].id}`}>View result</Link>
+                  : images[key] && !busy && (
+                      <button type="button" className="linkish" onClick={() => clear(key)}>Remove</button>
+                    )}
               </div>
 
               <label className="card stack grow"
                      style={{ padding: 20, gap: 12, alignItems: "center", justifyContent: "center",
                               borderStyle: "dashed", cursor: busy ? "default" : "pointer", minHeight: 260 }}>
-                <input type="file" accept="image/jpeg,image/png" disabled={busy}
+                <input type="file" accept="image/jpeg,image/png" disabled={busy || Boolean(saved[key])}
                        onChange={pick(key)} style={{ display: "none" }} />
                 {previews[key] ? (
                   <>
                     <img src={previews[key]} alt="" style={{ maxWidth: 200, maxHeight: 200, borderRadius: "50%" }} />
                     <div className="mono" style={{ fontSize: 12 }}>{images[key].name}</div>
-                    {!busy && <span style={{ color: "var(--accent)", fontSize: 13 }}>Replace</span>}
+                    {!busy && !saved[key] && (
+                      <span style={{ color: "var(--accent)", fontSize: 13 }}>
+                        {progress[key] && !["grading", "done"].includes(progress[key])
+                          ? "Use a different photograph"
+                          : "Replace"}
+                      </span>
+                    )}
                   </>
                 ) : (
                   <>
@@ -197,15 +229,20 @@ export default function NewCase({ onDirtyChange }) {
         {error && <div className="err">{error}</div>}
 
         <div className="stack" style={{ gap: 8, alignItems: "center" }}>
-          <button className="btn" type="submit" disabled={busy} style={{ minWidth: 260 }}>
+          <button className="btn" type="submit" disabled={busy || (chosen.length > 0 && rejected.length === 0)} style={{ minWidth: 260 }}>
             {busy
               ? "Grading…"
-              : chosen.length === 2
+              : rejected.length === 2
                 ? "Upload and grade both eyes"
-                : chosen.length === 1
-                  ? `Upload and grade ${chosen[0].label.toLowerCase()}`
+                : rejected.length === 1
+                  ? `Upload and grade ${rejected[0].label.toLowerCase()}`
                   : "Upload and grade"}
           </button>
+          {savedCases.length > 0 && (
+            <button type="button" className="linkish" onClick={() => openResults(savedCases)}>
+              Continue to {savedCases.length === 1 ? "the result" : "the results"} →
+            </button>
+          )}
           <div className="muted" style={{ fontSize: 12.5 }}>
             Each photograph goes to the grading model straight away.
           </div>

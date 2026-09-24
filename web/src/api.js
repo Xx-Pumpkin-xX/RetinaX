@@ -10,6 +10,13 @@ const BASE = import.meta.env.PROD ? "" : (import.meta.env.VITE_API_URL || "");
 // server.js has to name it in Access-Control-Allow-Headers.
 export const API_HEADERS = { "ngrok-skip-browser-warning": "true" };
 
+const AUTH_PATHS = [
+  "/api/login",
+  "/api/signup",
+  "/api/password/forgot",
+  "/api/password/reset",
+];
+
 async function call(path, options = {}) {
   const res = await fetch(BASE + path, {
     credentials: "include",
@@ -18,7 +25,18 @@ async function call(path, options = {}) {
   });
   if (res.status === 204) return null;
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  if (!res.ok) {
+    // 401 on anything but the sign-in endpoints means the session cookie is
+    // gone. Announce it once so App can return to the sign-in screen rather
+    // than leaving a stale name in the header.
+    if (res.status === 401 && !AUTH_PATHS.includes(path)) {
+      window.dispatchEvent(new Event("retinax:session-ended"));
+    }
+    const err = new Error(body.error || `HTTP ${res.status}`);
+    err.status = res.status;
+    err.code = body.code ?? null;
+    throw err;
+  }
   return body;
 }
 
@@ -32,7 +50,13 @@ export const api = {
   me: () => call("/api/me"),
   login: (email, password, keepSignedIn) =>
     call("/api/login", json("POST", { email, password, keepSignedIn })),
-  logout: () => call("/api/logout", { method: "POST" }),
+  logout: async () => {
+    const out = await call("/api/logout", { method: "POST" });
+    // Other tabs of this site are listening for this key, so they leave the
+    // worklist at the same moment rather than at their next click.
+    try { localStorage.setItem("retinax:signed-out", String(Date.now())); } catch {}
+    return out;
+  },
   cases: () => call("/api/cases"),
   case: (id) => call(`/api/cases/${id}`),
   createCase: (formData) => call("/api/cases", { method: "POST", body: formData }),

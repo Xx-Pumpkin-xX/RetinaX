@@ -11,7 +11,7 @@ export default function Hero() {
             await api.me(); // throws if not signed in (401)
             navigate("/cases/new");
         } catch {
-            navigate("/login", { state: { reason: "upload" } });
+            navigate("/login", { state: { reason: "upload", next: "/cases/new" } });
         }
     };
 

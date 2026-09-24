@@ -19,6 +19,27 @@ export default function App() {
         api.me().then(setMe).catch(() => setMe(null));
     }, []);
 
+    // A session can end somewhere else: signed out in another tab, or simply
+    // expired. Without this the header keeps showing a name with no session
+    // behind it, and the next click fails with an error instead of taking the
+    // doctor to the sign-in screen.
+    useEffect(() => {
+        const ended = () => setMe((current) => (current ? null : current));
+        const onStorage = (e) => { if (e.key === "retinax:signed-out") ended(); };
+        const onVisible = () => {
+            if (document.visibilityState !== "visible") return;
+            api.me().then(setMe).catch(ended);
+        };
+        window.addEventListener("retinax:session-ended", ended);
+        window.addEventListener("storage", onStorage);
+        document.addEventListener("visibilitychange", onVisible);
+        return () => {
+            window.removeEventListener("retinax:session-ended", ended);
+            window.removeEventListener("storage", onStorage);
+            document.removeEventListener("visibilitychange", onVisible);
+        };
+    }, []);
+
     // The landing page is public and renders immediately. Waiting on the session
     // check would show a spinner to a visitor who is not signing in at all.
     // If the session check later confirms they are already signed in (e.g. they
@@ -54,12 +75,20 @@ export default function App() {
             return <Login onSignedIn={setMe} />;
         }
         // Anything else behind the login goes to the sign-in screen — not a blank
-        // page, and not silently back to the landing.
-        return <Navigate to="/login" replace />;
+        // page, and not silently back to the landing. Where they were going is
+        // carried along, so a session that expired mid-work resumes there.
+        return (
+            <Navigate to="/login" replace
+                      state={{ next: location.pathname + location.search }} />
+        );
     }
 
     // Signed in but pointed at /login: send them to the worklist.
-    if (location.pathname === "/login") return <Navigate to="/cases" replace />;
+    // Someone who pressed Upload on the landing page wanted the upload form,
+    // not the worklist. Hero puts that destination in the navigation state.
+    if (location.pathname === "/login") {
+        return <Navigate to={location.state?.next || "/cases"} replace />;
+    }
 
     async function signOut() {
         await api.logout();

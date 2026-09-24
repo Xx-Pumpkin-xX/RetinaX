@@ -752,6 +752,27 @@ function isInvalidImageError(err) {
 }
 
 /**
+ * One patient code, one photograph per eye.
+ *
+ * A patient has two eyes, so a code may carry at most an OD and an OS. A
+ * second image of the same eye under the same code is how a worklist ends up
+ * with two grades for one eye and no way to tell which one the clinician
+ * meant. Corrections have their own route; a second upload is not one.
+ *
+ * FAILED rows are exempt: they hold no grade, and dropSupersededFailures
+ * exists precisely to clear them once a retry works.
+ */
+function eyeTaken(doctorId, patientCode, eye, exceptCaseId = null) {
+  return db
+    .prepare(
+      `SELECT CaseID FROM cases
+        WHERE DoctorID = ? AND PatientCode = ? AND EyePosition = ?
+          AND Status <> 'FAILED' AND CaseID <> ?`
+    )
+    .get(doctorId, patientCode, eye, exceptCaseId ?? "");
+}
+
+/**
  * Drop earlier failed attempts at the same eye once one of them works.
  *
  * A failed case holds nothing a clinician can use — no grade, no explanation,
@@ -784,10 +805,35 @@ async function dropSupersededFailures(doctorId, patientCode, eye, keepCaseId) {
 }
 
 app.post("/api/cases", auth, uploadUserLimit, aiUserConcurrency, aiGlobalConcurrency, upload.single("image"), async (req, res) => {
-  const { patientCode, birthYear, patientSex, eyePosition } = req.body || {};
+  const { patientSex } = req.body || {};
+  const patientCode = String(req.body?.patientCode ?? "").trim();
+  const eyePosition = String(req.body?.eyePosition ?? "").trim().toUpperCase();
+  const birthYear = Number(String(req.body?.birthYear ?? "").trim());
+  const thisYear = new Date().getFullYear();
+
+  // Every rejection below has to drop the upload too, or the disk fills with
+  // images no case row points at.
+  const reject = async (status, payload) => {
+    await removeFile(req.file?.path);
+    return res.status(status).json(payload);
+  };
+
   if (!req.file) return res.status(400).json({ error: "An image is required" });
-  if (!patientCode || !eyePosition) {
-    return res.status(400).json({ error: "Patient code and eye are required" });
+  if (!patientCode) return reject(400, { error: "A patient code is required" });
+  if (patientCode.length > 64) return reject(400, { error: "That patient code is too long" });
+  if (!["OD", "OS"].includes(eyePosition)) {
+    return reject(400, { error: "Eye must be OD (right) or OS (left)" });
+  }
+  if (!Number.isInteger(birthYear) || birthYear < 1900 || birthYear > thisYear) {
+    return reject(400, { error: `Year of birth must be between 1900 and ${thisYear}` });
+  }
+  if (eyeTaken(req.doctorId, patientCode, eyePosition)) {
+    return reject(409, {
+      error: `${patientCode} already has a ${eyePosition === "OD" ? "right" : "left"} eye image`,
+      code: "DUPLICATE_EYE",
+      patientCode,
+      eyePosition,
+    });
   }
 
   const id = randomUUID();
@@ -796,7 +842,7 @@ app.post("/api/cases", auth, uploadUserLimit, aiUserConcurrency, aiGlobalConcurr
     `INSERT INTO cases (CaseID, DoctorID, PatientCode, BirthYear, PatientSex,
                         EyePosition, ImagePath, Status, CreatedAt)
      VALUES (?,?,?,?,?,?,?,'PROCESSING',?)`
-  ).run(id, req.doctorId, patientCode.trim(), Number(birthYear) || null,
+  ).run(id, req.doctorId, patientCode, birthYear,
         patientSex || null, eyePosition, req.file.path, now);
 
   try {
@@ -810,7 +856,7 @@ app.post("/api/cases", auth, uploadUserLimit, aiUserConcurrency, aiGlobalConcurr
           imageWidth, imageHeight, suppressionReason,
           lesions ? JSON.stringify(lesions) : null, new Date().toISOString());
     db.prepare("UPDATE cases SET Status = 'GRADED' WHERE CaseID = ?").run(id);
-    await dropSupersededFailures(req.doctorId, patientCode.trim(), eyePosition, id);
+    await dropSupersededFailures(req.doctorId, patientCode, eyePosition, id);
   
   } catch (err) {
     console.error("grading failed:", err.message);
@@ -999,15 +1045,19 @@ app.post("/api/cases/:id/details", auth, (req, res) => {
     return res.status(400).json({ error: "Sex must be F or M, or left blank" });
   }
 
-  let birthYear = null;
-  if (rawYear !== null && rawYear !== undefined && String(rawYear).trim() !== "") {
-    birthYear = Number(rawYear);
-    const thisYear = new Date().getFullYear();
-    // A year outside this range is a typo, not a patient. Rejecting it here
-    // beats a worklist quietly sorted by an impossible age.
-    if (!Number.isInteger(birthYear) || birthYear < 1900 || birthYear > thisYear) {
-      return res.status(400).json({ error: `Year of birth must be between 1900 and ${thisYear}` });
-    }
+  // A year outside this range is a typo, not a patient. Rejecting it here
+  // beats a worklist quietly sorted by an impossible age.
+  const birthYear = Number(String(rawYear ?? "").trim());
+  const thisYear = new Date().getFullYear();
+  if (!Number.isInteger(birthYear) || birthYear < 1900 || birthYear > thisYear) {
+    return res.status(400).json({ error: `Year of birth must be between 1900 and ${thisYear}` });
+  }
+
+  if (eyeTaken(req.doctorId, patientCode, eyePosition, req.params.id)) {
+    return res.status(409).json({
+      error: `${patientCode} already has a ${eyePosition === "OD" ? "right" : "left"} eye image`,
+      code: "DUPLICATE_EYE",
+    });
   }
 
   const changed = [];
