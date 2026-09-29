@@ -11,11 +11,14 @@ export default function Login({ onSignedIn }) {
 
   const [view, setView] = useState(() => {
     const params = new URLSearchParams(window.location.search);
-    return window.location.pathname === "/login/verify"
-        ? "loginVerify"
-        : params.get("token")
-          ? "reset"
-          : "login";
+    const path = window.location.pathname;
+    if (path === "/login/verify") return "loginVerify";
+    // The address-confirmation link from signup. Without this line it fell to
+    // the test below - which asks only whether there is a token at all - and
+    // the doctor was shown "choose a new password": a different token, a
+    // different table, and a form that could not have worked.
+    if (path === "/verify") return "emailVerify";
+    return params.get("token") ? "reset" : "login";
   });
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -106,6 +109,16 @@ export default function Login({ onSignedIn }) {
     const out = await api.verifyLogin(new URLSearchParams(window.location.search).get("token"));
     window.history.replaceState({}, "", "/login");
     onSignedIn(out);
+  });
+
+  // A button, not an automatic request on load: link scanners and mail
+  // previewers fetch every URL in a message, and confirmation should be the
+  // doctor's act, not their mail provider's.
+  const submitEmailVerify = () => run(async () => {
+    await api.verifyEmail(tokenFromUrl());
+    window.history.replaceState({}, "", "/login");
+    go("login");
+    setNote("Your address is confirmed. Sign in to continue.");
   });
 
   const submitReset = (e) => {
@@ -254,6 +267,21 @@ export default function Login({ onSignedIn }) {
             {error && <div className="err">{error}</div>}
             <button className="btn" type="button" disabled={busy} onClick={submitLoginVerify}>
               {busy ? "Approving…" : "Approve sign-in"}
+            </button>
+          </div>
+        )}
+
+        {view === "emailVerify" && (
+          <div className="card stack" style={{ padding: 26, gap: 16 }}>
+            <div className="stack" style={{ gap: 5 }}>
+              <div style={{ fontSize: 16, fontWeight: 600 }}>Confirm your address</div>
+              <div className="muted" style={{ fontSize: 13 }}>
+                The last step of signing up. This does not change your password.
+              </div>
+            </div>
+            {error && <div className="err">{error}</div>}
+            <button className="btn" type="button" disabled={busy} onClick={submitEmailVerify}>
+              {busy ? "Confirming…" : "Confirm my address"}
             </button>
           </div>
         )}
