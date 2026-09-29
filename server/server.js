@@ -437,7 +437,13 @@ app.get("/api/health", healthIpLimit, async (_req, res) => {
 });
 
 app.post("/api/login", loginIpLimit, loginAccountLimit, async (req, res) => {
-  const { email, password, keepSignedIn } = req.body || {};
+  const { email, password } = req.body || {};
+  // Anything off the wire, coerced once and deliberately. The old code passed
+  // the raw value through to `keepSignedIn ? 14 : 1`, so the string "false" -
+  // which is truthy in JavaScript - bought a fourteen-day session from a client
+  // that asked for one day.
+  const raw = req.body?.keepSignedIn;
+  const keepSignedIn = raw === true || raw === "true" || raw === 1 || raw === "1";
   if (!email || !password) return res.status(400).json({ error: "Email and password are required" });
 
   const doc = db.prepare("SELECT * FROM doctors WHERE Email = ?").get(String(email).toLowerCase().trim());
@@ -1714,6 +1720,25 @@ app.get("/api/cases/:id/heatmap/:method", auth, (req, res) => {
 app.use((err, _req, res, _next) => {
   console.error(err);
   res.status(400).json({ error: err.message || "Something went wrong" });
+});
+
+/**
+ * Express 4 does not await a route handler, so a throw inside an `async` one
+ * becomes a rejected promise nobody is holding - and Node 22 ends the process
+ * for an unhandled rejection. One malformed request could take the entire API
+ * down, with no log line saying why, because the process was already gone.
+ *
+ * Staying up is the right trade here. This is a single process with no
+ * supervisor to restart it: a failed request is one clinician pressing the
+ * button again, while an exit is every clinician locked out until a person
+ * notices. Both paths print a stack, so the cause is findable afterwards
+ * instead of being inferred from a socket that closed.
+ */
+process.on("unhandledRejection", (reason) => {
+  console.error("[crash] unhandled rejection —", reason instanceof Error ? reason.stack : reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[crash] uncaught exception —", err?.stack ?? err);
 });
 
 const httpServer = app.listen(PORT, async () => {

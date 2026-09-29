@@ -236,8 +236,20 @@ case "${1:-start}" in
     ENV_FILE=""
     [ -f "$HERE/host.env" ] && ENV_FILE="--env-file='$HERE/host.env'"
 
-    API_CMD="NODE_ENV=production PORT=$PORT SEED_DEMO='${SEED_DEMO:-1}' \
-       node $ENV_FILE server.js 2>&1 | tee '$LOG'"
+    # Wrapped in a loop, not run once. node can still be killed by something no
+    # handler catches - the process exiting is exactly what happened on 29 Sep
+    # 2026, and because the tmux session died with it the API stayed down until
+    # a person happened to look. Two seconds of downtime is a clinician pressing
+    # the button again; an unattended outage is the whole clinic.
+    #
+    # Every restart writes a line, so a service that is quietly dying and coming
+    # back reads as a crash loop in the log instead of hiding as good uptime.
+    API_CMD="while true; do \
+       NODE_ENV=production PORT=$PORT SEED_DEMO='${SEED_DEMO:-1}' \
+         node $ENV_FILE server.js 2>&1; \
+       echo \"[respawn] node exited (\$?) at \$(date -Is) - restarting in 2s\"; \
+       sleep 2; \
+     done | tee '$LOG'"
     if [ "$HAVE_SESSION" = "1" ]; then
       tmux split-window -t "$SESSION" -c "$HERE" "$API_CMD"
     else
