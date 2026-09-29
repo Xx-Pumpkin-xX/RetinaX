@@ -57,6 +57,10 @@ app.use((req, res, next) => {
   next();
 });
 
+// Raisable from host.env, because a clinic with a 24-megapixel camera should
+// not need a new tar to accept its photographs.
+const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB || 12);
+
 const upload = multer({
   // diskStorage rather than `dest`, only to keep the file extension.
   // multer's dest mode writes a random name with no extension, so res.sendFile
@@ -70,12 +74,38 @@ const upload = multer({
       cb(null, `${randomUUID()}${/^\.(jpe?g|png)$/.test(ext) ? ext : ".jpg"}`);
     },
   }),
-  limits: { fileSize: 12 * 1024 * 1024 },
+  limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ok = ["image/jpeg", "image/png"].includes(file.mimetype);
     cb(ok ? null : new Error("Only JPEG or PNG images are accepted"), ok);
   },
 });
+
+/**
+ * multer with an answer instead of a hang-up.
+ *
+ * On its own, `upload.single(...)` rejects an oversized file by throwing while
+ * the browser is still uploading. Express's default handler then answers a
+ * request whose body is only half read, the socket is torn down, and the client
+ * sees a bare connection error - no status, no reason. A doctor whose
+ * photograph is one megabyte too large gets a network failure and no way to
+ * know why.
+ *
+ * So: drain whatever is still coming, then answer properly. 413 with the actual
+ * limit in the sentence, because "too large" without a number is not advice.
+ */
+const uploadImage = (req, res, next) =>
+  upload.single("image")(req, res, (err) => {
+    if (!err) return next();
+    req.resume();                       // let the rest of the body arrive and be discarded
+    const tooBig = err.code === "LIMIT_FILE_SIZE";
+    return res.status(tooBig ? 413 : 400).json({
+      error: tooBig
+        ? `That image is larger than ${MAX_UPLOAD_MB} MB. Export it smaller, or as JPEG, and try again.`
+        : err.message || "The image was rejected",
+      code: tooBig ? "IMAGE_TOO_LARGE" : "UPLOAD_REJECTED",
+    });
+  });
 
 /* ---------------------------------------------------------------- auth --- */
 
@@ -980,7 +1010,7 @@ async function dropSupersededFailures(doctorId, patientCode, eye, keepCaseId) {
   return stale.length;
 }
 
-app.post("/api/cases", auth, uploadUserLimit, aiUserConcurrency, aiGlobalConcurrency, upload.single("image"), async (req, res) => {
+app.post("/api/cases", auth, uploadUserLimit, aiUserConcurrency, aiGlobalConcurrency, uploadImage, async (req, res) => {
   const patientSex = req.body?.patientSex ? String(req.body.patientSex).trim().toUpperCase() : null;
   const patientCode = String(req.body?.patientCode ?? "").trim();
   const eyePosition = String(req.body?.eyePosition ?? "").trim().toUpperCase();
@@ -1686,7 +1716,7 @@ app.use((err, _req, res, _next) => {
   res.status(400).json({ error: err.message || "Something went wrong" });
 });
 
-app.listen(PORT, async () => {
+const httpServer = app.listen(PORT, async () => {
   console.log(`RetinaX API on http://localhost:${PORT}`);
   console.log(`[boot] build ${versionLine()} — ${VERSION.packedBy}`);
   // Free hosts wipe the disk on restart. This puts the demo data back.
@@ -1718,3 +1748,18 @@ app.listen(PORT, async () => {
     } catch (e) { console.warn("[demo]", e.message); }
   }
 });
+
+/**
+ * Node closes an idle keep-alive connection after five seconds by default.
+ * A client that pauses longer than that between requests - the seeding script
+ * between two gradings, a browser between two page actions - can pick a socket
+ * the server is closing at that same instant and write into it. The write
+ * succeeds, the answer never comes, and the error is a bare "other side closed"
+ * with no status to explain it. That is what stopped the seed at case 6 of 14.
+ *
+ * 65 seconds puts the server on the far side of that race: the client always
+ * gives up on a connection first. headersTimeout must stay above it, or Node
+ * enforces the shorter of the two.
+ */
+httpServer.keepAliveTimeout = Number(process.env.KEEP_ALIVE_MS || 65000);
+httpServer.headersTimeout = httpServer.keepAliveTimeout + 1000;
