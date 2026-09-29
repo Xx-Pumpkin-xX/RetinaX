@@ -72,6 +72,29 @@ async def lifespan(app):
     except Exception as e:
         print(f"[startup] model load failed: {type(e).__name__}: {e}")
         _model = None
+    # Warm the model before anyone asks it for anything real.
+    #
+    # Loading the weights is not the whole cost. The first forward pass also
+    # builds the CUDA context and, with cudnn.benchmark on, makes cuDNN time
+    # several convolution algorithms before it picks one. That work landed on
+    # whichever clinician uploaded first after the machine had been idle, and
+    # it regularly pushed them past the API's 45-second timeout - the case came
+    # back FAILED and the photograph looked rejected. Paying it here costs a
+    # few seconds of startup that nobody is waiting on.
+    if _model is not None:
+        try:
+            import time
+            import torch
+            import dr_adapter
+            t0 = time.time()
+            blank = torch.zeros(1, 3, dr_adapter.IMAGE_SIZE, dr_adapter.IMAGE_SIZE)
+            dr_adapter.predict_score(blank)
+            print(f"[startup] warm-up forward in {time.time() - t0:.1f}s", flush=True)
+        except Exception as e:
+            # A failed warm-up is not a reason to refuse service: the first real
+            # request will simply pay the cost the old way.
+            print(f"[startup] warm-up skipped: {type(e).__name__}: {e}", flush=True)
+
     print(f"[startup] ready — {'REAL MODEL' if _model else 'STAND-IN'} | "
           f"thresholds {_thresholds}", flush=True)
     yield

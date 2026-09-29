@@ -168,6 +168,13 @@ ensureColumn("predictions", "SuppressionReason", "TEXT");
 // not run for this case, which is a different fact from "found nothing".
 ensureColumn("predictions", "Lesions", "TEXT");
 ensureColumn("doctors", "EmailVerified", "INTEGER NOT NULL DEFAULT 1");
+// Bumped whenever every existing session for this doctor must stop working -
+// today that means a password reset. The number is carried inside each token,
+// so one integer comparison on every request retires a whole generation of
+// them at once. `revoked_sessions` retires one named session; this retires all
+// of them, which is what someone who thinks their password leaked is asking
+// for when they change it.
+ensureColumn("doctors", "TokenEpoch", "INTEGER NOT NULL DEFAULT 0");
 ensureColumn("doctors", "VerifyTokenHash", "TEXT");
 ensureColumn("doctors", "VerifyTokenExpiry", "TEXT");
 // Whether the doctor ticked "keep me signed in" on the sign-in that asked for

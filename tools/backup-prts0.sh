@@ -21,8 +21,13 @@ echo "chụp vào $OUT"
 
 # ---- 1. dữ liệu: dùng đúng công cụ sẵn có, và nó ghi vào trong vault --------
 if [ -f "$HOME_DIR/retinax-data/.vault-open" ]; then
+  # tools/snapshot.sh, không phải bản lẻ ở $HOME: bản lẻ là di tích từ thời
+  # mỗi script chỉ tồn tại một bản trên một máy, và nó không được cập nhật nữa.
+  # SNAPSHOT_DIR đưa bản sao vào TRONG vault — mặc định của snapshot.sh là
+  # ~/retinax-snapshots, tức database và toàn bộ ảnh đáy mắt nằm trần trên đĩa.
   ( cd "$HOME_DIR" && set -a && . server/host.env && set +a \
-    && bash snapshot.sh save "pre-opt-$STAMP" ) && echo "  dữ liệu: snapshot pre-opt-$STAMP"
+    && SNAPSHOT_DIR="$VAR_DIR/snapshots" bash tools/snapshot.sh save "pre-opt-$STAMP" ) \
+    && echo "  dữ liệu: snapshot pre-opt-$STAMP"
 else
   echo "  !! vault chưa mount — BỎ QUA phần dữ liệu." >&2
   echo "     gocryptfs ~/retinax-vault ~/retinax-data rồi chạy lại." >&2
@@ -33,8 +38,10 @@ tar czf "$OUT/server.tar.gz" -C "$HOME_DIR" \
     --exclude='server/node_modules' --exclude='server/data' --exclude='server/uploads' \
     --exclude='server/*.env' --exclude='server/.ipynb_checkpoints' --exclude='server/*.log' \
     server $( [ -d "$HOME_DIR/tools" ] && echo tools )
-for f in snapshot.sh ollama-proxy.py seed-cases.mjs purge-demo.js reset-cases.js; do
-  [ -f "$HOME_DIR/$f" ] && cp "$HOME_DIR/$f" "$OUT/" 2>/dev/null || true
+# Từ tools/, nơi chúng thật sự sống. Vòng lặp cũ đọc ở $HOME và sẽ lặng lẽ
+# không sao chép gì sau khi mấy bản lẻ ở đó bị dọn đi.
+for f in snapshot.sh ollama-proxy.py seed-cases.mjs purge-demo.js reset-cases.js purge-doctors.js; do
+  [ -f "$HOME_DIR/tools/$f" ] && cp "$HOME_DIR/tools/$f" "$OUT/" 2>/dev/null || true
 done
 echo "  code: $(du -h "$OUT/server.tar.gz" | cut -f1)"
 

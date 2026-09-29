@@ -127,6 +127,13 @@ function auth(req, res, next) {
   // Checked on every request, because that is the only moment a token copied
   // out of the browser can be stopped. One indexed lookup on a primary key.
   if (isRevoked(claims.jti)) return res.status(401).json({ error: "Session expired" });
+  // A token from before the doctor's last password reset. Tokens issued before
+  // this field existed have no `epo`; they are treated as epoch 0, which is
+  // also the default for every account that has never reset, so nobody is
+  // signed out by the upgrade itself.
+  if ((claims.epo ?? 0) !== tokenEpoch(claims.sub)) {
+    return res.status(401).json({ error: "Session expired" });
+  }
   req.doctorId = claims.sub;
   next();
 }
@@ -161,12 +168,24 @@ function sessionCookieOptions() {
   };
 }
 
+function tokenEpoch(doctorId) {
+  return db.prepare("SELECT TokenEpoch FROM doctors WHERE DoctorID = ?").get(doctorId)?.TokenEpoch ?? 0;
+}
+
 function issueSession(res, doctorId, keepSignedIn) {
   const days = keepSignedIn ? 14 : 1;
   // jwtid gives the session a name, which is the whole basis for being able to
   // revoke it later. Tokens issued before this existed simply have no jti and
   // cannot be revoked; they expire on their own within a fortnight.
-  const token = jwt.sign({ sub: doctorId }, SECRET, { expiresIn: `${days}d`, jwtid: randomUUID() });
+  //
+  // `epo` is the doctor's token epoch at the moment of issue. Bumping the
+  // column invalidates every token carrying an older number, so a password
+  // reset can end all of them without knowing any of their ids.
+  const token = jwt.sign(
+    { sub: doctorId, epo: tokenEpoch(doctorId) },
+    SECRET,
+    { expiresIn: `${days}d`, jwtid: randomUUID() }
+  );
   res.cookie("rx", token, {
     ...sessionCookieOptions(),
     maxAge: days * 24 * 60 * 60 * 1000,
@@ -444,6 +463,14 @@ app.post("/api/login", loginIpLimit, loginAccountLimit, async (req, res) => {
   // that asked for one day.
   const raw = req.body?.keepSignedIn;
   const keepSignedIn = raw === true || raw === "true" || raw === 1 || raw === "1";
+  // Typed, not just present. bcryptjs throws `Illegal arguments` on anything
+  // that is not a string, and this route is reachable by anyone: a single
+  // unauthenticated POST with `"password": true` threw inside an async handler
+  // and, before the guards below existed, ended the process. Rejected rather
+  // than coerced, because String(true) would quietly try to sign in as "true".
+  if (typeof email !== "string" || typeof password !== "string") {
+    return res.status(400).json({ error: "Email and password must be text" });
+  }
   if (!email || !password) return res.status(400).json({ error: "Email and password are required" });
 
   const doc = db.prepare("SELECT * FROM doctors WHERE Email = ?").get(String(email).toLowerCase().trim());
@@ -747,10 +774,19 @@ app.post("/api/password/reset", resetIpLimit, (req, res) => {
   }
 
   // Clearing the hash in the same statement is what makes the link single-use.
+  // TokenEpoch goes up with it: changing a password because it may have leaked
+  // and leaving the thief's session alive for another fortnight is not a reset.
   db.prepare(
-    `UPDATE doctors SET PasswordHash = ?, ResetTokenHash = NULL, ResetTokenExpiry = NULL
-     WHERE DoctorID = ?`
+    `UPDATE doctors
+        SET PasswordHash = ?, ResetTokenHash = NULL, ResetTokenExpiry = NULL,
+            TokenEpoch = TokenEpoch + 1
+      WHERE DoctorID = ?`
   ).run(bcrypt.hashSync(String(password), 10), doc.DoctorID);
+
+  // And every browser they had taught to skip the email approval, for the same
+  // reason: a trusted browser is one the thief may be sitting at.
+  const forgotten = db.prepare("DELETE FROM trusted_devices WHERE DoctorID = ?").run(doc.DoctorID).changes;
+  console.log(`[reset] ${doc.DoctorID.slice(0, 8)}: sessions retired, ${forgotten} trusted browser(s) forgotten`);
 
   res.json({ ok: true });
 });
