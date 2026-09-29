@@ -1,10 +1,183 @@
 # Operations
 
+Written to be used while something is broken. The recovery runbook is first,
+on purpose — in an emergency nobody scrolls.
+
+Three machines. Only two of the six processes restart themselves; the other
+four die silently and stay dead until someone starts them.
+
+| Machine | Process | Listens on | Started by |
+|---|---|---|---|
+| prts-1 (Windows) | nothing runs here | — | holds git, builds tars |
+| Cloudflare Pages | the web app + the `/api/*` proxy | retinax.pages.dev | a push to `main` |
+| prts-0 | gocryptfs vault | `~/retinax-data` | **by hand**, needs the passphrase |
+| prts-0 | node API, tmux `retinax-api` | :3000 | `server/run-on-host.sh` |
+| prts-0 | cloudflared, tmux `cftunnel` | a public hostname → :3000 | **by hand** |
+| prts-0 | ollama proxy, tmux `ollamaproxy` | 127.0.0.1:11500 → Spark | **by hand** |
+| Spark | uvicorn grading model, tmux `retinax-ai` | :8000 | `retinax-ai/run-on-dgx.sh` |
+| Spark | ollama, tmux `ollama` | :11434 | **by hand** |
+
+Two paths through it, and they fail independently:
+
+    grading    browser → Pages → tunnel → API:3000 → Tailscale → Spark:8000
+    assistant  browser → Pages → tunnel → API:3000 → proxy:11500 → Spark:11434
+
+---
+
+## Recovery — prts-0 or the Spark has just come back up
+
+Do these in order. Each step says what proves it worked. If a check fails,
+fix that step before going on; skipping ahead is how an afternoon disappears.
+
+### 1. Spark — the grading model
+
+    cd ~/Projects/USTH/ProjectDR2026
+    bash retinax-ai/run-on-dgx.sh
+    bash retinax-ai/run-on-dgx.sh status
+
+B7 takes 30–60 s to load. **Proof:** `status` prints `model … cuda`, and
+`lesion  established: EX HE MA SE | provisional: IRMA NV`. Six lesion classes,
+not five.
+
+### 2. Spark — ollama, for the assistant
+
+    curl -s http://127.0.0.1:11434/api/tags | grep -o '"name":"[^"]*"'
+
+Empty means it is not running:
+
+    tmux new -d -s ollama 'ollama serve'
+    sleep 5
+    ollama list
+
+**Proof:** the model named in `CHAT_MODEL` (`host.env` on prts-0, default
+`qwen3.5:4b`) appears in the list, spelled identically. `chatReachable()`
+compares the whole string; one character off reads as "not installed".
+
+### 3. prts-0 — open the vault. Nothing else until this is right.
+
+    mountpoint ~/retinax-data
+
+Not a mountpoint:
+
+    ~/bin/gocryptfs ~/retinax-vault ~/retinax-data
+
+**If gocryptfs answers `Invalid mountpoint: directory … not empty`, STOP.**
+Either the vault is already mounted — check with `findmnt ~/retinax-data`, a
+line containing `fuse.gocryptfs` means yes, carry on — or there is plaintext
+sitting in the mountpoint from an earlier start on a closed vault. Do not
+delete it and do not mount over it. Mount the vault somewhere else and compare
+the two before deciding:
+
+    mkdir -p ~/vault-check && ~/bin/gocryptfs ~/retinax-vault ~/vault-check
+    ls ~/retinax-data/uploads | wc -l ; ls ~/vault-check/uploads | wc -l
+    ls -la ~/retinax-data/data/retinax.db ~/vault-check/data/retinax.db
+
+The one with the photographs is the real data. Then `fusermount -u
+~/vault-check` (`fusermount3` on newer systems), move the loser aside under a
+dated name, and mount the vault at `~/retinax-data`.
+
+**Proof:** `mountpoint` says it is one, and `ls ~/retinax-data/uploads | wc -l`
+is the number of photographs you expect — not zero.
+
+`run-on-host.sh` now refuses to start when the vault is closed, so a mistake
+here stops the deploy instead of quietly creating a second, empty database.
+
+### 4. prts-0 — the ollama proxy
+
+    tmux new -d -s ollamaproxy 'python3 ~/tools/ollama-proxy.py'
+    sleep 2
+    curl -s http://127.0.0.1:11500/api/tags | grep -o '"name":"[^"]*"'
+
+**Proof:** the same model name as in step 2. Nothing, and `tmux ls` has no
+`ollamaproxy`, means the script died on start — run it in the foreground to
+see why.
+
+### 5. prts-0 — the API
+
+    cd ~ && bash server/run-on-host.sh
+
+**Proof:** `api  db ok | model ok | assistant on | mail ok`. `assistant off`
+means step 2 or step 4 is not done.
+
+### 6. prts-0 — the tunnel
+
+Not started by `run-on-host.sh`. Kill any old one first, or two cloudflareds
+run with two hostnames and you will publish the wrong one:
+
+    tmux kill-session -t cftunnel 2>/dev/null
+    tmux new -d -s cftunnel 'cloudflared tunnel --no-autoupdate --protocol http2 --url http://localhost:3000 2>&1 | tee ~/cftunnel.log'
+    sleep 10
+    grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' ~/cftunnel.log | tail -1
+
+Every flag earns its place:
+
+- `--no-autoupdate` — cloudflared updates itself daily and restarts, which
+  changes the hostname with nobody touching anything. That is what happened on
+  24 Sep 2026.
+- `--protocol http2` — the default is QUIC over UDP 7844, which this network
+  blocks. The tunnel appears to start and then serves nothing.
+- `tee ~/cftunnel.log` — **not** `~/server/tunnel.log`: `run-on-host.sh`
+  truncates that file on every start, so the hostname disappears the next time
+  the API restarts.
+
+### 7. Put the hostname in both places
+
+    U=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' ~/cftunnel.log | tail -1)
+    sed -i "s|^PUBLIC_URL=.*|PUBLIC_URL=$U|" ~/server/host.env
+    echo "$U"
+
+Then Cloudflare Pages → Settings → Environment variables → `API_ORIGIN` = that
+string, no trailing slash → **Deployments → Retry deployment**. Without the
+retry the old value stays live.
+
+Miss this step and the symptom is misleading: the site loads and every request
+inside it fails, which looks exactly like the API being down.
+
+### 8. Final check
+
+    bash server/run-on-host.sh status
+    tmux ls
+
+Good looks like this:
+
+    tmux    running
+    build   v1.1.0-… | packed by tar | node v22.x | up 12s
+    api     db ok | model ok | assistant on | mail ok
+    model   tf_efficientnet_b7_ns | 600px | cbam on | tta on | cuda
+    lesion  established: EX HE MA SE | provisional: IRMA NV
+    grade   best_thresholds.npy | cuts 0.565 1.441 2.375 3.042
+    public  https://….trycloudflare.com  ok
+
+`tmux ls` must list all three: `retinax-api`, `ollamaproxy`, `cftunnel`.
+
+Then open the site, sign in, and upload one photograph. That is the only test
+that exercises all three tiers; `status` proves each machine is alive, not that
+they can reach each other.
+
+---
+
+## Reading the status line
+
+    build   which tar is unpacked here. `packed by source` means somebody
+            copied files by hand — the version is then a guess.
+    api     db = the database opened. model = the Spark answered.
+            assistant = ollama reachable through the proxy. mail = Gmail
+            credentials present.
+    lesion  provisional classes are shown in the UI as hints and, for NV, as
+            "not assessed" rather than "0". Never as a count to rely on.
+    public  `ok` means the API answered through the tunnel. Anything else
+            prints the first 120 bytes of what did answer — a Cloudflare 1016
+            page means the hostname has no live tunnel behind it.
+
+Raw JSON instead of the table: `bash server/run-on-host.sh status --raw`.
+
+---
+
 ## Encryption
 
 Encrypted: everything under `VAR_DIR` on prts-0 — the database
 `data/retinax.db`, the uploaded fundus photographs and heatmaps in `uploads/`,
-and the snapshots in `snapshots/`.
+and snapshots, **provided `SNAPSHOT_DIR` puts them there** (see below).
 
 Tool: gocryptfs, mounted through FUSE. The application does no encryption of
 its own. The binary lives at `~/bin/gocryptfs` on prts-0 and is the only thing
@@ -23,25 +196,71 @@ opens with an OpenSSL build of the same version and the reverse.
 
 The passphrase is not stored on the machine, so the vault is opened by hand
 after every reboot. `server/run-on-host.sh` refuses to start unless
-`$VAR_DIR/.vault-open` is present, which only happens while the vault is open.
+`$VAR_DIR/.vault-open` exists or `VAR_DIR` is a mount point.
 
 Not encrypted: database columns (the schema holds no patient names, only
-`PatientCode` and `BirthYear`).
+`PatientCode`, `BirthYear` and `PatientSex`).
+
+---
 
 ## prts-0 — API
 
-    gocryptfs ~/retinax-vault ~/retinax-data
-    bash server/run-on-host.sh start
-    bash server/run-on-host.sh status
+    bash server/run-on-host.sh              # start
+    bash server/run-on-host.sh status       # the table above
+    bash server/run-on-host.sh status --raw # the JSON behind it
     bash server/run-on-host.sh stop
     bash server/run-on-host.sh logs
     bash tools/status.sh
     curl -s http://localhost:3000/api/health
-    fusermount3 -u ~/retinax-data
+    fusermount -u ~/retinax-data            # fusermount3 on newer systems
 
-Ollama bridge (the app-wide assistant needs it; case chat does not):
+---
 
-    tmux new -d -s ollama-proxy 'python3 ~/tools/ollama-proxy.py'
+## Flushing and restoring the data
+
+Every tool here reads `VAR_DIR` from `host.env`. **Run without loading it and
+node creates a fresh empty database next to you, reports nothing to delete, and
+the real data sits untouched somewhere else while everything looks fine.** So
+every session starts the same way, with the API stopped so SQLite is not open:
+
+    mountpoint ~/retinax-data
+    cd ~ && bash server/run-on-host.sh stop
+    set -a && . server/host.env && set +a
+
+Take a restore point first. `SNAPSHOT_DIR` is not decoration: the default is
+`~/retinax-snapshots`, which is **outside the vault**, so the database and
+every fundus photograph land on disk unencrypted.
+
+    SNAPSHOT_DIR="$VAR_DIR/snapshots" bash tools/snapshot.sh save before-flush
+    SNAPSHOT_DIR="$VAR_DIR/snapshots" bash tools/snapshot.sh list
+
+Empty the worklist. **`reset-cases.js` deletes every case, prediction, review
+and uploaded file, for all doctors** — it does not "un-review" anything. It
+runs dry by default and prints what it would remove:
+
+    node tools/reset-cases.js               # prints, deletes nothing
+    node tools/reset-cases.js --apply       # backs up the db file, then deletes
+
+Accounts survive: `doctors` and `trusted_devices` are untouched, so nobody has
+to confirm an address or approve a browser again.
+
+Put it back:
+
+    SNAPSHOT_DIR="$VAR_DIR/snapshots" bash tools/snapshot.sh restore before-flush
+
+`restore` moves the current state aside before overwriting, so restoring the
+wrong snapshot is recoverable. `SNAPSHOT_DIR` is needed on `restore` and `list`
+as well — leave it off and the script looks in the default directory and
+reports no snapshots at all.
+
+Rebuild demo data — **this one needs the API running**, because it uploads
+through the real HTTP API, so every image is graded by the Spark and it takes
+minutes, not seconds:
+
+    bash server/run-on-host.sh
+    node tools/seed-cases.mjs
+
+---
 
 ## Operational scripts
 
@@ -50,50 +269,32 @@ none of them exists as a single file on one machine any more — which is what
 they were until 29 Sep 2026:
 
     tools/snapshot.sh        save and restore the database and the images
-    tools/ollama-proxy.py    rewrites the Host header so Ollama accepts tailnet traffic
-    tools/seed-cases.mjs     create demo cases through the real API
-    tools/purge-demo.js      remove demo data
-    tools/reset-cases.js     put cases back to awaiting review
+    tools/ollama-proxy.py    rewrites the Host header so ollama accepts tailnet traffic
+    tools/seed-cases.mjs     create demo cases through the real API (API must be up)
+    tools/purge-demo.js      list doctors; with an email and --apply, delete that
+                             doctor's cases and files
+    tools/reset-cases.js     DELETE every case, prediction, review and image file
     tools/seed-quang.mjs     seed the demo account only (hard-codes a DoctorID)
+    tools/status.sh          one-shot health summary
+    tools/backup-prts0.sh    data snapshot + code tar + a performance baseline
 
-## Tunnel
-
-The API is reachable from the internet through a cloudflared quick tunnel. It
-is started by hand and is not managed by `run-on-host.sh`:
-
-    tmux new -d -s cftunnel 'cloudflared tunnel --url http://localhost:3000'
-    tmux capture-pane -pt cftunnel | grep trycloudflare
-
-A quick tunnel gets a **new hostname every time it starts**. When it does, two
-things must be updated or the site cannot reach the API:
-
-    1. Cloudflare Pages -> Settings -> Environment variables -> API_ORIGIN
-       (then Deployments -> Retry deployment, or the old value stays live)
-    2. server/host.env -> PUBLIC_URL, so `run-on-host.sh status` checks the
-       address a browser actually uses
-
-Deploy a new build. prts-0 runs from an unpacked tar, not from git, so
-`git push` alone changes nothing here:
-
-    bash tools/build-server-tar.sh          # on the dev machine
-    cd ~
-    tar xzf ~/retinax-server-<version>.tar.gz
-    bash server/run-on-host.sh stop
-    bash server/run-on-host.sh start
-
-Snapshots:
-
-    cd ~ && set -a && . server/host.env && set +a && bash tools/snapshot.sh list
-    cd ~ && set -a && . server/host.env && set +a && bash tools/snapshot.sh save <name>
-    cd ~ && set -a && . server/host.env && set +a && bash tools/snapshot.sh restore <name>
+---
 
 ## DGX Spark — model
 
-    bash ai/run-on-dgx.sh
-    bash ai/run-on-dgx.sh status
-    bash ai/run-on-dgx.sh stop
-    bash ai/run-on-dgx.sh logs
+    bash retinax-ai/run-on-dgx.sh
+    bash retinax-ai/run-on-dgx.sh status
+    bash retinax-ai/run-on-dgx.sh status --raw
+    bash retinax-ai/run-on-dgx.sh stop
+    bash retinax-ai/run-on-dgx.sh logs
     curl -s http://100.126.54.48:8000/health
+
+The Spark has **no git checkout and no version control** — its directory is
+ignored by the parent repository's `.gitignore`. It is deployed by unpacking
+`retinax-ai-<version>.tar.gz`, and the only copy of any local edit is on that
+machine. Extract with `tar xzf … && rm -rf retinax-ai && mv ai retinax-ai`, in
+that order: `rm -rf` before the tar is known to be good has already destroyed
+`dgx.env` once.
 
 `ai/main.py` in git must stay the version that runs on the Spark: it carries
 the `/chat` endpoint and the six lesion models as well as the fundus gate. A
@@ -103,30 +304,69 @@ The first request after the machine has been idle can exceed the API's
 45-second timeout while the models load, which surfaces as a case in `FAILED`
 state. That is what the Re-grade button is for.
 
+---
+
 ## Accounts
 
 A new account is created unconfirmed: sign-up emails a link that expires in 24
 hours, and `POST /api/login` answers 403 until it is opened. The sign-in screen
 offers `POST /api/email/resend` when that happens.
 
-Signing in from an unrecognised browser sends an approval link instead, valid
-15 minutes; opening it trusts that browser for 30 days.
+Opening the confirmation link both confirms the address **and trusts that
+browser for 30 days**, so signing up costs one email and one click. The trust
+follows the browser that opened the link, not the one that signed up — open it
+on the machine you will actually be using.
 
-Signing out clears the cookie, records the session's token id in
-`revoked_sessions` so a copy of it stops working everywhere, and ends the
-browser's device trust — so the next sign-in from it needs a fresh approval.
+Signing in from a browser that is not trusted sends an approval link instead,
+valid 15 minutes.
 
-`DEMO_EMAILS` in `host.env` lists the accounts exempt from both, so the demo
-can be signed into from any machine in the room. Everything in that list has a
-publicly known password by design - keep it to demo accounts.
+Signing out ends the session — the token id goes into `revoked_sessions`, so a
+copy of the cookie stops working everywhere — but leaves the browser trusted.
+The device token skips the email step, never the password. `POST
+/api/logout?forget=1` is the version that also distrusts the browser, for a
+borrowed machine.
 
-## After a full restart
+`DEMO_EMAILS` in `host.env` lists the accounts exempt from confirmation and
+approval, so the demo can be signed into from any machine in the room.
+Everything in that list has a publicly known password by design — keep it to
+demo accounts, and remember that testing the sign-up flow with a demo address
+proves nothing, because it skips both steps.
 
-    1. Spark:   bash ai/run-on-dgx.sh
-    2. prts-0:  gocryptfs ~/retinax-vault ~/retinax-data
-    3. prts-0:  tmux new -d -s ollama-proxy 'python3 ~/tools/ollama-proxy.py'
-    4. prts-0:  tmux new -d -s cftunnel 'cloudflared tunnel --url http://localhost:3000'
-    5. prts-0:  bash server/run-on-host.sh start
-    6. update:  the tunnel's new hostname into Pages API_ORIGIN and host.env
-                PUBLIC_URL, then retry the Pages deployment
-    7. check:   bash tools/status.sh
+---
+
+## Deploying a new build
+
+prts-0 runs from an unpacked tar, not from git, so `git push` alone changes
+nothing there. Pages is the opposite: a push is the deploy.
+
+On prts-1, in **Git Bash** — `bash` in PowerShell resolves to WSL, which on
+this machine is broken:
+
+    bash tools/build-server-tar.sh
+
+Or from PowerShell, finding the right bash without guessing the path:
+
+    $bash = Join-Path (Split-Path (Split-Path (Get-Command git).Source)) 'bin\bash.exe'
+    & $bash tools/build-server-tar.sh
+
+Commit before building: the version comes from `git describe --dirty`, so a
+dirty tree ships a tar named `-dirty`.
+
+Upload the tar to prts-0 through JupyterLab, then:
+
+    ls -la ~/retinax-server-*.tar.gz
+    cd ~
+    tar xzf ~/retinax-server-<the exact name>.tar.gz
+    bash server/run-on-host.sh stop
+    bash server/run-on-host.sh
+
+**Type the name out.** With two tars in `~`, `tar xzf ~/retinax-server-*.tar.gz`
+expands to two arguments and tar reads the second as a member name inside the
+first — which on 29 Sep 2026 silently reinstalled a build from that morning.
+
+The tar carries `server/` and `tools/` only. It never contains `host.env`, the
+database, the photographs or `node_modules`, so unpacking it over a running
+deployment cannot lose data.
+
+The tunnel is a separate tmux session in front of port 3000, so it survives an
+API restart and the hostname does not change — no need to touch Pages again.

@@ -167,6 +167,27 @@ case "${1:-start}" in
     [ "$NODE_MM" -ge 2205 ] || { echo "!! Node $(node -v 2>/dev/null || echo 'is missing') — need >= 22.5" >&2; exit 1; }
 
     [ -d "$HERE/node_modules" ] || { echo "installing dependencies…"; (cd "$HERE" && npm ci); }
+
+    # The vault has to be open before anything touches VAR_DIR. When it is not,
+    # VAR_DIR is an ordinary empty directory: the API starts on a brand-new
+    # empty database and writes plaintext photographs into the mountpoint,
+    # where they are hidden the moment the vault is mounted over them. Nothing
+    # in the output says so - /api/health cheerfully reports database ok. This
+    # happened on 29 Sep 2026 and cost an afternoon of forensics.
+    #
+    # Two independent tests, because either one can be unavailable: a marker
+    # file that exists only inside the vault, and the kernel's mount table.
+    VAULT_DIR="${VAULT_DIR:-$HOME/retinax-vault}"
+    if [ -d "$VAULT_DIR" ] && [ ! -f "$VAR_DIR/.vault-open" ] \
+       && ! { command -v mountpoint >/dev/null 2>&1 && mountpoint -q "$VAR_DIR"; }; then
+      echo "!! the vault is not open — refusing to start on $VAR_DIR" >&2
+      echo "     gocryptfs '$VAULT_DIR' '$VAR_DIR'" >&2
+      echo "   then start again. If gocryptfs says 'not empty', STOP: something" >&2
+      echo "   is already in the mountpoint and it is not your data." >&2
+      echo "   (VAULT_DIR= disables this check, for a deployment with no vault)" >&2
+      exit 1
+    fi
+
     mkdir -p "$VAR_DIR"
 
     : > "$TLOG"

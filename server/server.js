@@ -1452,12 +1452,18 @@ app.post("/api/cases/:id/mark", auth, (req, res) => {
     req.params.id
   );
 
+  // `true` is not optional here. Without it this returns the lean worklist
+  // shape, and the screen that is showing the case replaces what it has with a
+  // row carrying no regions, no lesions and no imageSize - so agreeing with a
+  // grade made the explanation overlays and the lesion chips disappear until
+  // the page was reloaded.
   res.json({
     ...caseRow(
       ownCase(
         req.params.id,
         req.doctorId
-      )
+      ),
+      true
     ),
 
     reviews: reviewHistory(

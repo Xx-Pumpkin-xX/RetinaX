@@ -36,6 +36,7 @@ import { Readable } from "node:stream";
 const OLLAMA_URL = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
 const MODEL = process.env.CHAT_MODEL || "qwen3.5:4b";
 const TIMEOUT_MS = Number(process.env.CHAT_TIMEOUT_MS || 120000);
+const NUM_PREDICT = Number(process.env.CHAT_NUM_PREDICT || 900);
 
 const MAX_MESSAGES = 20;
 const MAX_CHARS = 8000;
@@ -100,7 +101,10 @@ async function callOllama(messages, stream) {
       // qwen3.5 returns its whole thinking process in a separate field and
       // some clients render it as the reply.
       think: false,
-      options: { temperature: 0.3, num_predict: 600 },
+      // num_predict is a guillotine, not an instruction: it stops generation
+      // mid-sentence when the budget runs out. Brevity belongs in the system
+      // prompt; this is only a ceiling on a model that will not stop.
+      options: { temperature: 0.3, num_predict: NUM_PREDICT },
     }),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
@@ -116,7 +120,10 @@ async function callOllama(messages, stream) {
 export async function chatOnce(messages) {
   const res = await callOllama(messages, false);
   const out = await res.json();
-  return { reply: out?.message?.content ?? "", model: MODEL };
+  const truncated = out?.done_reason === "length";
+  const reply = (out?.message?.content ?? "")
+    + (truncated ? "\n\n_[cut short at the length limit]_" : "");
+  return { reply, model: MODEL, truncated };
 }
 
 /**
