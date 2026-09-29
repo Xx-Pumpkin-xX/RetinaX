@@ -4,7 +4,7 @@
 # the database and every uploaded photograph.
 #
 #   ./run-on-host.sh          start the API and its public tunnel
-#   ./run-on-host.sh status   is it up, and can it see the model?
+#   ./run-on-host.sh status   is it up, and can it see the model? (--raw for JSON)
 #   ./run-on-host.sh logs     tail the API log
 #   ./run-on-host.sh stop     stop both
 #
@@ -50,6 +50,78 @@ public_url() {
   fi
 }
 
+# /health and /api/health rendered short.  Raw JSON:  ./run-on-host.sh status --raw
+HEALTH_FMT='
+import json, sys
+try:
+    h = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+on = lambda b: "on" if b else "off"
+loaded = h.get("lesions_loaded") or []
+est = h.get("lesions_established") or []
+prov = [x for x in loaded if x not in est]
+th = h.get("thresholds") or []
+print("model   %s | %spx | cbam %s | tta %s | %s" % (
+    h.get("model_name", "?"), h.get("image_size", "?"),
+    on(h.get("use_cbam")), on(h.get("tta")), h.get("device", "?")))
+print("lesion  established: %s | provisional: %s" % (
+    " ".join(est) or "-", " ".join(prov) or "-"))
+print("grade   %s | cuts %s" % (
+    h.get("thresholds_source", "?"),
+    " ".join("%.3f" % t for t in th) or "-"))
+bad = []
+if not h.get("model_loaded"):       bad.append("MODEL NOT LOADED")
+if not h.get("fundus_gate_loaded"): bad.append("FUNDUS GATE NOT LOADED")
+if h.get("on_cpu_fallback"):        bad.append("RUNNING ON CPU, not cuda")
+if len(loaded) < 6:                 bad.append("only %d of 6 lesion models" % len(loaded))
+if h.get("note"):                   bad.append(str(h["note"]))
+if bad:
+    print("warn    " + " | ".join(bad))
+'
+
+API_FMT='
+import json, sys
+try:
+    h = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+up = int(h.get("uptimeSeconds") or 0)
+if up >= 3600:  age = "%dh%02dm" % (up // 3600, (up % 3600) // 60)
+elif up >= 60:  age = "%dm" % (up // 60)
+else:           age = "%ds" % up
+print("build   %s (%s, %s) | packed by %s | node %s | up %s" % (
+    h.get("version", "?"), h.get("commit", "?"), h.get("branch", "?"),
+    h.get("packedBy", "?"), h.get("node", "?"), age))
+say = lambda b: "ok" if b else "DOWN"
+print("api     db %s | model %s | assistant %s | mail %s" % (
+    say(h.get("database")), say(h.get("model")),
+    "on" if h.get("assistant") else "off",
+    "ok" if h.get("mail") else "not configured"))
+'
+
+# $1 = base url of the model service
+health() {
+  local j
+  j="$(curl -s -m 15 "$1/health" 2>/dev/null || true)"
+  if [ -z "$j" ]; then echo "model   unreachable at $1 - check the tunnel, or Tailscale on both ends"; return 1; fi
+  if [ "${RAW:-0}" = "1" ] || ! command -v python3 >/dev/null 2>&1; then
+    printf '%s\n' "$j"; return 0
+  fi
+  printf '%s' "$j" | python3 -c "$HEALTH_FMT" || printf '%s\n' "$j"
+}
+
+# $1 = base url of the API
+api_health() {
+  local j
+  j="$(curl -s -m 15 "$1/api/health" 2>/dev/null || true)"
+  if [ -z "$j" ]; then echo "api     no answer at $1"; return 1; fi
+  if [ "${RAW:-0}" = "1" ] || ! command -v python3 >/dev/null 2>&1; then
+    printf '%s\n' "$j"; return 0
+  fi
+  printf '%s' "$j" | python3 -c "$API_FMT" || printf '%s\n' "$j"
+}
+
 case "${1:-start}" in
   url) public_url || { echo "PUBLIC_URL is not set in host.env"; exit 1; } ;;
 
@@ -58,13 +130,20 @@ case "${1:-start}" in
   stop) tmux kill-session -t "$SESSION" 2>/dev/null && echo "stopped." || echo "was not running." ;;
 
   status)
-    echo "tmux:  $(tmux has-session -t "$SESSION" 2>/dev/null && echo running || echo 'NOT running')"
-    echo -n "api:   "; curl -s -m 5 "http://localhost:$PORT/api/cases" || echo "(no answer on :$PORT)"; echo
-    [ -n "${AI_SSH:-}" ] && echo "tunnel: ssh -L to $AI_SSH"
-    echo -n "model: "; curl -s -m 8 "${AI_URL:-http://localhost:8000}/health" \
-      || echo "(unreachable — check the tunnel, or Tailscale on both ends)"; echo
+    if [ "${2:-}" = "--raw" ] || [ "${2:-}" = "raw" ]; then RAW=1; fi
+    echo "tmux    $(tmux has-session -t "$SESSION" 2>/dev/null && echo running || echo 'NOT running')"
+    api_health "http://localhost:$PORT" || true
+    [ -n "${AI_SSH:-}" ] && echo "tunnel  ssh -L to $AI_SSH"
+    health "${AI_URL:-http://localhost:8000}" || true
     U="$(public_url || true)"
-    [ -n "$U" ] && { echo -n "public: "; curl -s -m 15 "$U/api/health" || echo "(no answer)"; echo; }
+    if [ -n "$U" ]; then
+      P="$(curl -s -m 15 "$U/api/health" 2>/dev/null || true)"
+      if [ -z "$P" ]; then
+        echo "public  $U  NO ANSWER - the tunnel is not serving"
+      else
+        echo "public  $U  $(printf '%s' "$P" | python3 -c 'import json,sys; h=json.load(sys.stdin); print("ok" if h.get("ok") else "answered, but ok=false")' 2>/dev/null || echo answered)"
+      fi
+    fi
     ;;
 
   start)
@@ -155,5 +234,5 @@ case "${1:-start}" in
     echo; echo "not up yet — check: ./run-on-host.sh logs" >&2; exit 1
     ;;
 
-  *) echo "usage: $0 [start|status|url|logs|stop]" >&2; exit 1 ;;
+  *) echo "usage: $0 [start|status [--raw]|url|logs|stop]" >&2; exit 1 ;;
 esac

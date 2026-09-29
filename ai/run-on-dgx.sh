@@ -4,7 +4,7 @@
 # so both survive your SSH session ending — and survive you closing JupyterLab.
 #
 #   ./run-on-dgx.sh          start both
-#   ./run-on-dgx.sh status   is it up, and is the real model loaded?
+#   ./run-on-dgx.sh status   is it up, and is the real model loaded? (--raw for JSON)
 #   ./run-on-dgx.sh url      print the public URL
 #   ./run-on-dgx.sh logs     tail the service log
 #   ./run-on-dgx.sh stop     stop both
@@ -78,25 +78,69 @@ public_url() {
   grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOG" | tail -1
 }
 
+# /health rendered short. Raw JSON instead:  ./run-on-dgx.sh status --raw
+HEALTH_FMT='
+import json, sys
+try:
+    h = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+on = lambda b: "on" if b else "off"
+loaded = h.get("lesions_loaded") or []
+est = h.get("lesions_established") or []
+prov = [x for x in loaded if x not in est]
+th = h.get("thresholds") or []
+print("model   %s | %spx | cbam %s | tta %s | %s" % (
+    h.get("model_name", "?"), h.get("image_size", "?"),
+    on(h.get("use_cbam")), on(h.get("tta")), h.get("device", "?")))
+print("lesion  established: %s | provisional: %s" % (
+    " ".join(est) or "-", " ".join(prov) or "-"))
+print("grade   %s | cuts %s" % (
+    h.get("thresholds_source", "?"),
+    " ".join("%.3f" % t for t in th) or "-"))
+print("gate    %s | accept>=%.2f reject<=%.2f" % (
+    h.get("fundus_gate_model", "?"),
+    h.get("fundus_accept_threshold", 0), h.get("fundus_reject_threshold", 0)))
+bad = []
+if not h.get("model_loaded"):       bad.append("MODEL NOT LOADED")
+if not h.get("fundus_gate_loaded"): bad.append("FUNDUS GATE NOT LOADED")
+if h.get("on_cpu_fallback"):        bad.append("RUNNING ON CPU, not cuda")
+if len(loaded) < 6:                 bad.append("only %d of 6 lesion models" % len(loaded))
+if h.get("note"):                   bad.append(str(h["note"]))
+if bad:
+    print("warn    " + " | ".join(bad))
+'
+
+# $1 = base url. Prints the summary, or the raw body if python cannot read it.
+health() {
+  local j
+  j="$(curl -s -m 15 "$1/health" 2>/dev/null || true)"
+  if [ -z "$j" ]; then echo "model   no answer at $1"; return 1; fi
+  if [ "${RAW:-0}" = "1" ] || ! command -v python3 >/dev/null 2>&1; then
+    printf '%s\n' "$j"; return 0
+  fi
+  printf '%s' "$j" | python3 -c "$HEALTH_FMT" || printf '%s\n' "$j"
+}
+
 case "${1:-start}" in
   url)
     public_url || { echo "no URL yet — check $LOG"; exit 1; }
     ;;
 
   status)
-    echo "tmux:  $(tmux has-session -t "$SESSION" 2>/dev/null && echo running || echo 'NOT running')"
-    echo -n "model: "; curl -s -m 5 "http://localhost:$PORT/health" || echo "(no answer on :$PORT)"
-    echo
+    if [ "${2:-}" = "--raw" ] || [ "${2:-}" = "raw" ]; then RAW=1; fi
+    echo "tmux    $(tmux has-session -t "$SESSION" 2>/dev/null && echo running || echo 'NOT running')"
+    health "http://localhost:$PORT" || true
     if [ "${SERVE_API:-0}" = "1" ]; then
-      echo -n "api:   "; curl -s -m 5 "http://localhost:$API_PORT/api/cases" || echo "(no answer on :$API_PORT)"
+      echo -n "api     "; curl -s -m 5 "http://localhost:$API_PORT/api/cases" || echo "(no answer on :$API_PORT)"
       echo
     fi
     if [ "${TUNNEL:-1}" = "0" ]; then
-      echo "tunnel: off — reached privately over Tailscale"
-      command -v tailscale >/dev/null 2>&1 && echo "  this host: $(tailscale status --self --peers=false 2>/dev/null | head -1)"
+      echo "tunnel  off - reached privately over Tailscale"
+      command -v tailscale >/dev/null 2>&1 && echo "        this host: $(tailscale status --self --peers=false 2>/dev/null | head -1)"
     fi
     U="$([ "${TUNNEL:-1}" = "1" ] && public_url || true)"
-    if [ -n "$U" ]; then echo -n "public ($U): "; curl -s -m 15 "$U/health" || echo "(no answer)"; echo; fi
+    if [ -n "$U" ]; then echo "tunnel  $U"; health "$U" || true; fi
     ;;
 
   logs)
@@ -167,8 +211,10 @@ case "${1:-start}" in
         if [ "${SERVE_API:-0}" = "1" ]; then
           curl -s -m 3 "http://localhost:$API_PORT/api/cases" | grep -q "Not signed in" || { printf .; continue; }
         fi
-        echo; echo "READY.  public URL: $(public_url)"
-        curl -s "http://localhost:$PORT/health"; echo
+        U="$(public_url || true)"
+        echo
+        if [ -n "$U" ]; then echo "READY at $U"; else echo "READY - no tunnel, reached privately over Tailscale"; fi
+        health "http://localhost:$PORT" || true
         exit 0
       fi
       printf .
@@ -177,5 +223,5 @@ case "${1:-start}" in
     exit 1
     ;;
 
-  *) echo "usage: $0 [start|status|url|logs|stop]" >&2; exit 1 ;;
+  *) echo "usage: $0 [start|status [--raw]|url|logs|stop]" >&2; exit 1 ;;
 esac
