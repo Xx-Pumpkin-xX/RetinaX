@@ -11,11 +11,19 @@ four die silently and stay dead until someone starts them.
 | prts-1 (Windows) | nothing runs here | — | holds git, builds tars |
 | Cloudflare Pages | the web app + the `/api/*` proxy | retinax.pages.dev | a push to `main` |
 | prts-0 | gocryptfs vault | `~/retinax-data` | **by hand**, needs the passphrase |
+| Spark | tailscaled (userspace), tmux `ts` | the tailnet itself | **by hand**, respawn loop |
 | prts-0 | node API, tmux `retinax-api` | :3000 | `server/run-on-host.sh` |
 | prts-0 | cloudflared, tmux `cftunnel` | a public hostname → :3000 | **by hand** |
 | prts-0 | ollama proxy, tmux `ollamaproxy` | 127.0.0.1:11500 → Spark | **by hand** |
 | Spark | uvicorn grading model, tmux `retinax-ai` | :8000 | `retinax-ai/run-on-dgx.sh` |
 | Spark | ollama, tmux `ollama` | :11434 | **by hand** |
+
+`tailscaled` is the one nobody remembers. It is not a property of the network:
+it is a userspace binary in `~/tailscale_*_arm64/`, started by hand in tmux `ts`,
+with no systemd and no root behind it. When it dies, **both** paths below die at
+the same instant — and two independent services failing together is the
+signature of the route being gone rather than the services. On 29 Sep 2026 it
+was killed with no shutdown line in its log and stayed dead until someone looked.
 
 Two paths through it, and they fail independently:
 
@@ -24,7 +32,30 @@ Two paths through it, and they fail independently:
 
 ---
 
-## Recovery — prts-0 or the Spark has just come back up
+## Recovery — the short way
+
+Two commands, Spark first. Each script checks every step before starting the
+next, skips whatever is already running, and stops with the exact line to type
+when it hits something it must not do for you.
+
+    # Spark, in the JupyterLab terminal
+    bash ~/Projects/USTH/ProjectDR2026/retinax-ai/start-all-dgx.sh
+
+    # prts-0
+    cd ~ && bash tools/start-all.sh
+
+Neither one opens the vault: that passphrase is deliberately not on the machine.
+`start-all.sh` stops and prints the `gocryptfs` line when it finds it closed.
+
+If `start-all.sh` starts a new tunnel it rewrites `PUBLIC_URL` in `host.env` and
+then prints, loudly, the one thing no script can do — setting `API_ORIGIN` in
+Cloudflare Pages and retrying the deployment. Miss that and the site loads while
+every request inside it fails, which looks exactly like the API being down.
+
+The long form below is what those two scripts do, step by step. Read it when a
+script stops on a step, or when something is wrong in a way it does not cover.
+
+## Recovery — the long way
 
 Do these in order. Each step says what proves it worked. If a check fails,
 fix that step before going on; skipping ahead is how an afternoon disappears.
@@ -52,6 +83,25 @@ Empty means it is not running:
 **Proof:** the model named in `CHAT_MODEL` (`host.env` on prts-0, default
 `qwen3.5:4b`) appears in the list, spelled identically. `chatReachable()`
 compares the whole string; one character off reads as "not installed".
+
+### 2b. Spark — tailscaled, the route itself
+
+    ls -S /tmp/tailscaled.sock && tmux ls | grep '^ts:'
+
+No socket means the tailnet is gone and prts-0 can reach neither service:
+
+    TS=$(ls -d ~/tailscale_*_arm64 | tail -1)
+    tmux kill-session -t ts 2>/dev/null
+    tmux new -d -s ts "while true; do '$TS/tailscaled' --tun=userspace-networking \
+        --socket=/tmp/tailscaled.sock --state=$HOME/tailscaled.state >> $HOME/tailscaled.log 2>&1; \
+      echo \"[respawn] tailscaled exited at \$(date -Is)\" >> $HOME/tailscaled.log; sleep 5; done"
+    sleep 5
+    $TS/tailscale --socket=/tmp/tailscaled.sock status | head -3
+
+`tailscaled.state` persists, so no auth key is needed unless that file is lost.
+
+**Proof:** from prts-0, `tailscale status | grep spark` shows the Spark without
+the word `offline`.
 
 ### 3. prts-0 — open the vault. Nothing else until this is right.
 
@@ -276,6 +326,9 @@ they were until 29 Sep 2026:
     tools/reset-cases.js     DELETE every case, prediction, review and image file
     tools/seed-quang.mjs     seed the demo account only (hard-codes a DoctorID)
     tools/status.sh          one-shot health summary
+    tools/start-all.sh       bring prts-0 all the way up, checking each step
+    tools/purge-doctors.js   remove accounts that have never filed a case
+    ai/start-all-dgx.sh      the same for the Spark: tailnet, ollama, model
     tools/backup-prts0.sh    data snapshot + code tar + a performance baseline
 
 ---
@@ -300,9 +353,12 @@ that order: `rm -rf` before the tar is known to be good has already destroyed
 the `/chat` endpoint and the six lesion models as well as the fundus gate. A
 copy without those is a downgrade.
 
-The first request after the machine has been idle can exceed the API's
-45-second timeout while the models load, which surfaces as a case in `FAILED`
-state. That is what the Re-grade button is for.
+The service warms itself at startup: one dummy forward at the real input size,
+so the CUDA context and cuDNN's algorithm search are paid for before anyone
+uploads anything. The log says `[startup] warm-up forward in Xs`. Without it the
+first request after an idle machine regularly exceeded the API's 45-second
+timeout and came back as a `FAILED` case, which reads to a clinician as a
+rejected photograph. Re-grade still exists for the cases that predate this.
 
 ---
 

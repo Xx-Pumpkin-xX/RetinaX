@@ -35,6 +35,89 @@ has not been set up.
 
 ## Resolved
 
+### A single request could take the whole API down
+*Fixed 29 Sep 2026.*
+
+`POST /api/login` passed the request's `password` straight to bcryptjs, which
+throws `Illegal arguments` on anything that is not a string. The throw happened
+inside an `async` handler, Express 4 does not await those, and Node ends the
+process on an unhandled rejection. So one anonymous request carrying
+`"password": true` — no account, no credentials, one edited line in the browser's
+network tab — stopped the service for everybody, with no log line explaining it
+because the process was already gone.
+
+Found by the team testing its own product adversarially. Fixed in three
+independent layers, because one of them will eventually be wrong:
+
+- the route rejects a non-string email or password with 400 before bcrypt sees it
+- `unhandledRejection` and `uncaughtException` log a stack and keep serving
+- `run-on-host.sh` runs node in a respawn loop, so a process that dies anyway is
+  back in two seconds and writes a `[respawn]` line saying so
+
+An audit of every other `req.body` read found no second instance: the rest of
+the codebase already coerced with `String(...)`, checked against a whitelist, or
+tested `Array.isArray` first. Login was the one omission, in the one route that
+does not require an account.
+
+### The API would start happily on a closed vault
+*Fixed 29 Sep 2026.*
+
+`run-on-host.sh` created `VAR_DIR` if it was missing. With the vault unmounted
+that is an ordinary empty directory, so the API started on a brand-new empty
+database and wrote plaintext photographs into the mountpoint, where they are
+hidden the moment the vault is mounted over them — and `/api/health` reported
+`database ok` throughout. It refuses to start now unless `$VAR_DIR/.vault-open`
+exists or `VAR_DIR` is a mount point. The documentation had claimed this guard
+existed for some time before the code did.
+
+### Sign-out made the next sign-in wait for an email
+*Fixed 29 Sep 2026.*
+
+Signing out deleted the browser's trusted-device row, so anyone who signs out at
+the end of the day waited for an approval mail every morning — which trains
+people to click approval links without reading them, the opposite of what the
+mechanism is for. Sign-out now ends the session only. `POST /api/logout?forget=1`
+is the deliberate version for a borrowed machine.
+
+Confirming an address now also trusts the browser that opened the link, so
+signing up costs one email and one click instead of two. Both steps prove the
+same fact: that this person reads that mailbox.
+
+### The confirmation link opened the password reset form
+*Fixed 29 Sep 2026.*
+
+The sign-in screen chose its view by asking only whether the URL carried a
+token, so `/verify?token=…` — the address-confirmation link — fell through to
+the reset form. `api.verifyEmail` existed and nothing called it. Signing up had
+therefore never worked end to end; it was invisible because the demo account is
+exempt from confirmation, and that is the account everything was tested with.
+
+### A password reset left the old sessions alive
+*Fixed 29 Sep 2026.*
+
+Changing a password changed only the password: existing tokens stayed valid for
+up to fourteen days and every trusted browser stayed trusted. Someone resetting
+because they think their password leaked was not removing the thief. Sessions now
+carry the doctor's `TokenEpoch`, a reset increments it, and `auth` refuses any
+token from an earlier generation; the trusted browsers are dropped with it.
+
+### Year of birth and sex belonged to the photograph, not the patient
+*Fixed 29 Sep 2026.*
+
+Nothing tied the rows sharing a patient code together, so one eye could be filed
+as born 1968, F and the other as 1972, M for the same person. The first case
+under a code now fixes the patient: a later upload that disagrees is refused with
+`PATIENT_MISMATCH`, and correcting the details on one eye writes them to the
+others, which the form says before it saves.
+
+### Agreeing with a grade hid the explanation
+*Fixed 29 Sep 2026.*
+
+The review route returned the lean worklist shape, so the case screen replaced
+what it was showing with a row carrying no regions, no lesions and no image size.
+Pressing Agree made the overlays and the lesion chips vanish until a reload.
+
+
 ### Signing out did not actually end the session
 *Fixed 24 Sep 2026.*
 
