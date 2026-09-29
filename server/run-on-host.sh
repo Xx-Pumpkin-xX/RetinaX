@@ -138,10 +138,16 @@ case "${1:-start}" in
     U="$(public_url || true)"
     if [ -n "$U" ]; then
       P="$(curl -s -m 15 "$U/api/health" 2>/dev/null || true)"
+      # A grep, not a JSON parse: this line only needs to know whether the API
+      # itself answered through the tunnel, and anything that is not the API -
+      # a Cloudflare error page, an interstitial - simply will not match.
       if [ -z "$P" ]; then
         echo "public  $U  NO ANSWER - the tunnel is not serving"
+      elif printf '%s' "$P" | grep -q '"ok":[[:space:]]*true'; then
+        echo "public  $U  ok"
       else
-        echo "public  $U  $(printf '%s' "$P" | python3 -c 'import json,sys; h=json.load(sys.stdin); print("ok" if h.get("ok") else "answered, but ok=false")' 2>/dev/null || echo answered)"
+        echo "public  $U  answered, but not with the API health - first 120 bytes:"
+        printf '        %.120s\n' "$P"
       fi
     fi
     ;;
