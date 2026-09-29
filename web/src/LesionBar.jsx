@@ -54,6 +54,9 @@ const WHY = {
 
 const pct = (v) => (v == null ? null : `${Math.round(v * 100)}%`);
 
+// The legend's glyph column. Fixed width so the lines read as a table.
+const SYM = { display: "inline-block", width: 30 };
+
 // An acronym stays an acronym: "20% of irma" reads like a typo.
 const inSentence = (s) => (s === s.toUpperCase() ? s : s.toLowerCase());
 
@@ -122,15 +125,16 @@ export default function LesionBar({ lesions, active, onPick }) {
       </div>
 
       {/* The legend is not decoration. Without it a dash and a zero look like
-          the same answer, and they are not. Each line stands on its own — no
-          keyboard-unfriendly em dash, and no cramming three ideas onto one
-          line the doctor has to re-parse. */}
+          the same answer, and they are not. Each line shows the glyph the chip
+          actually prints: a legend reading "-" while the chip draws an em dash
+          sends the reader hunting for a fourth state that does not exist. */}
       <div className="muted" style={{ fontSize: 12, lineHeight: 1.8 }}>
-        <div><strong>n</strong> areas marked</div>
-        <div><strong>0</strong> looked for, none found</div>
-        <div><strong>-</strong> not assessed, no claim made</div>
+        <div style={{ marginBottom: 2 }}>What the number on a chip means</div>
+        <div><strong style={SYM}>3</strong>the model marked three areas</div>
+        <div><strong style={SYM}>0</strong>the model looked and marked none</div>
+        <div><strong style={SYM}>—</strong>not assessed, so nothing is claimed either way</div>
         {anyProvisional && (
-          <div><strong>~n</strong> experimental areas, shown but not relied on</div>
+          <div><strong style={SYM}>~3</strong>experimental: hints to check, not findings</div>
         )}
       </div>
     </div>

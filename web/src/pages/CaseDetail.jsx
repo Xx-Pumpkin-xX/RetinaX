@@ -296,9 +296,10 @@ function CaseDetailInner() {
             <>
               <div style={{ borderTop: "1px solid var(--line)", margin: "0 16px" }} />
               <div className="muted" style={{ fontSize: 12.5, padding: "12px 16px", lineHeight: 1.5 }}>
-                {lesionShown.count} area{lesionShown.count === 1 ? "" : "s"} marked as{" "}
-                <strong>{lesionName}</strong> by a lesion model, which is a different model from the
-                one that produced grade {c.grade}. The two can disagree; neither overrules your reading.
+                <strong>{lesionShown.count} area{lesionShown.count === 1 ? "" : "s"}</strong>{" "}
+                marked as <strong>{lesionName}</strong>. These marks come from a separate lesion
+                model, not from the model that graded this eye {c.grade}. The two can disagree,
+                and neither replaces your reading.
                 {lesionShown.reliability && lesionShown.reliability !== "established" && (
                   <>
                     {" "}This class is <strong>experimental</strong>
@@ -328,7 +329,8 @@ function CaseDetailInner() {
           {c.grade != null && (
             <div className="stack" style={{ gap: 8, padding: "0 16px 14px" }}>
               <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
-                Grad-CAM explanation overlay. Redrawing re-renders the overlay from the current model without changing the grade.
+                Grad-CAM heat map: where the grading model looked, not what it found.
+                Redrawing recomputes the map from the current model. The grade stays as it is.
               </div>
               {explainError && <div className="err">{explainError}</div>}
               <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
