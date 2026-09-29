@@ -580,6 +580,11 @@ the model prediction and their assessment.
 
                 "options": {
                     "temperature": 0.2,
+                    # Đủ chỗ cho cả ca bệnh lẫn lịch sử hội thoại trong một
+                    # lượt, và chặn câu trả lời ở độ dài đọc được trên màn
+                    # hình ca bệnh thay vì để mô hình viết tràn.
+                    "num_ctx": 8192,
+                    "num_predict": 220,
                 },
             },
             timeout=60,

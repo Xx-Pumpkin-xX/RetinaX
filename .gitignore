@@ -71,3 +71,7 @@ ai/weights/
 ai/**/*.pth
 *.pt
 *.onnx
+
+# ảnh dùng làm mốc đo, cố định giữa các lần chạy
+ai/baseline-images/
+retinax-backups/

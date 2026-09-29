@@ -1536,9 +1536,20 @@ function sendImage(res, filePath) {
     return res.sendStatus(404);
   }
   res.type(type);
-  // Match the client's no-store: an image that was once served with the wrong
-  // content type must not be able to come back from a cache after the fix.
-  res.setHeader("Cache-Control", "no-store");
+  // A case's photograph never changes - swapping it would make the grade an
+  // answer to a different question - so the bytes at this URL are fixed for
+  // the life of the case and are worth caching. Every view of a case pulls the
+  // photograph and up to two overlays through the tunnel; flipping between CAM
+  // and CCEM used to re-download both, every time.
+  //
+  // A week rather than a year, deliberately. This header once had to be
+  // no-store because a response cached while the content type was wrong came
+  // back as a 304 and reused the stored, wrong headers - the picture stayed
+  // broken after the server was fixed. The type now comes from the file's
+  // magic bytes and ApiImage re-checks it on every load, cached or not, so
+  // that cannot silently recur; a week is how long a mistake could last if it
+  // did anyway.
+  res.setHeader("Cache-Control", "private, max-age=604800");
   res.sendFile(abs);
 }
 

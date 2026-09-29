@@ -6,8 +6,16 @@ Encrypted: everything under `VAR_DIR` on prts-0 — the database
 `data/retinax.db`, the uploaded fundus photographs and heatmaps in `uploads/`,
 and the snapshots in `snapshots/`.
 
-Tool: gocryptfs v2.6.1, mounted through FUSE. The application does no
-encryption of its own.
+Tool: gocryptfs, mounted through FUSE. The application does no encryption of
+its own. The binary lives at `~/bin/gocryptfs` on prts-0 and is the only thing
+that can open the vault, so the exact build is recorded here — rebuilding the
+machine means fetching this line, not the newest release:
+
+    gocryptfs v2.6.1 without_openssl; go-fuse v2.8.0; 2025-08-10 go1.24.6 linux/amd64
+
+`without_openssl` means it uses Go's own crypto rather than the system OpenSSL.
+The on-disk format is the same either way, so a vault written by this build
+opens with an OpenSSL build of the same version and the reverse.
 
 - File contents: AES-256-GCM, 4 KiB blocks, one nonce and one auth tag per block
 - File names: EME with AES, per-directory IV
@@ -33,7 +41,20 @@ Not encrypted: database columns (the schema holds no patient names, only
 
 Ollama bridge (the app-wide assistant needs it; case chat does not):
 
-    tmux new -d -s ollama-proxy 'python3 ~/ollama-proxy.py'
+    tmux new -d -s ollama-proxy 'python3 ~/tools/ollama-proxy.py'
+
+## Operational scripts
+
+These ship inside every server tar, so prts-0 always has the current copy and
+none of them exists as a single file on one machine any more — which is what
+they were until 29 Sep 2026:
+
+    tools/snapshot.sh        save and restore the database and the images
+    tools/ollama-proxy.py    rewrites the Host header so Ollama accepts tailnet traffic
+    tools/seed-cases.mjs     create demo cases through the real API
+    tools/purge-demo.js      remove demo data
+    tools/reset-cases.js     put cases back to awaiting review
+    tools/seed-quang.mjs     seed the demo account only (hard-codes a DoctorID)
 
 ## Tunnel
 
@@ -62,9 +83,9 @@ Deploy a new build. prts-0 runs from an unpacked tar, not from git, so
 
 Snapshots:
 
-    cd ~ && set -a && . server/host.env && set +a && bash snapshot.sh list
-    cd ~ && set -a && . server/host.env && set +a && bash snapshot.sh save <name>
-    cd ~ && set -a && . server/host.env && set +a && bash snapshot.sh restore <name>
+    cd ~ && set -a && . server/host.env && set +a && bash tools/snapshot.sh list
+    cd ~ && set -a && . server/host.env && set +a && bash tools/snapshot.sh save <name>
+    cd ~ && set -a && . server/host.env && set +a && bash tools/snapshot.sh restore <name>
 
 ## DGX Spark — model
 
@@ -103,7 +124,7 @@ publicly known password by design - keep it to demo accounts.
 
     1. Spark:   bash ai/run-on-dgx.sh
     2. prts-0:  gocryptfs ~/retinax-vault ~/retinax-data
-    3. prts-0:  tmux new -d -s ollama-proxy 'python3 ~/ollama-proxy.py'
+    3. prts-0:  tmux new -d -s ollama-proxy 'python3 ~/tools/ollama-proxy.py'
     4. prts-0:  tmux new -d -s cftunnel 'cloudflared tunnel --url http://localhost:3000'
     5. prts-0:  bash server/run-on-host.sh start
     6. update:  the tunnel's new hostname into Pages API_ORIGIN and host.env

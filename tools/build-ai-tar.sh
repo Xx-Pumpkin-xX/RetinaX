@@ -69,6 +69,8 @@ tar czf "$TAR" \
   --exclude=ai/weights \
   --exclude='ai/*.npy' \
   --exclude='*.pyc' \
+  --exclude=ai/train_lesions.py \
+  --exclude=ai/eval_lesion_level.py \
   ai
 
 if tar tzf "$TAR" | grep -E '(^|/)(dgx\.env|.*\.pth)$' ; then

@@ -16,6 +16,9 @@
 #   AI_URL=http://localhost:8000                 the model, privately
 #   PUBLIC_URL=https://<the tunnel hostname>      for the status check only
 #
+# Everything in host.env reaches node, because node reads the file itself.
+# Adding a variable there is all it takes - nothing has to be named twice.
+#
 # Reaching the model privately is the point: /infer has no authentication of
 # its own, so it should not be on the open internet. Two ways, either is fine:
 #
@@ -111,21 +114,24 @@ case "${1:-start}" in
     curl -s -m 8 "$AI_URL/health" >/dev/null 2>&1 \
       || echo "note: $AI_URL is not answering. The API will still serve every existing case; only new uploads will fail."
 
-    # Every RATE_* value from host.env, passed through by name. node only ever
-    # sees what this command names, so a limit set in host.env and missing here
-    # is set and silently ignored - which is how it looked tuned and was not.
-    RATE_ENV=""
-    for v in $(env | sed -n 's/^\(RATE_[A-Z0-9_]*\)=.*/\1/p' | sort); do
-      RATE_ENV="$RATE_ENV $v='${!v}'"
-    done
+    # node reads host.env itself rather than being handed the values on its
+    # command line. Two reasons, both learned the hard way:
+    #
+    #   nothing to keep in step  the old form named each variable explicitly,
+    #                            so anything added to host.env and forgotten
+    #                            here was set and silently ignored
+    #   nothing in `ps`          a command line is world-readable on this
+    #                            machine, and JWT_SECRET was in it
+    #
+    # PORT and NODE_ENV stay on the line because they are not secrets and do
+    # not live in host.env. A value on the line WINS over the same name in the
+    # file, which is why SEED_DEMO is written as a default here rather than a
+    # constant - host.env has already been sourced, so its value is what lands.
+    ENV_FILE=""
+    [ -f "$HERE/host.env" ] && ENV_FILE="--env-file='$HERE/host.env'"
 
-    API_CMD="NODE_ENV=production PORT=$PORT VAR_DIR='$VAR_DIR' WEB_ORIGIN='$WEB_ORIGIN' \
-       JWT_SECRET='$JWT_SECRET' AI_URL='$AI_URL' SEED_DEMO='${SEED_DEMO:-1}' \
-       OLLAMA_URL='${OLLAMA_URL:-}' CHAT_MODEL='${CHAT_MODEL:-}' \
-       API_PROXY_SECRET='${API_PROXY_SECRET:-}' DEMO_EMAILS='${DEMO_EMAILS:-}'$RATE_ENV \
-      GMAIL_CLIENT_ID='${GMAIL_CLIENT_ID:-}' GMAIL_CLIENT_SECRET='${GMAIL_CLIENT_SECRET:-}' \
-      GMAIL_REFRESH_TOKEN='${GMAIL_REFRESH_TOKEN:-}' GMAIL_USER='${GMAIL_USER:-}' MAIL_FROM='${MAIL_FROM:-}' \
-       node server.js 2>&1 | tee '$LOG'"
+    API_CMD="NODE_ENV=production PORT=$PORT SEED_DEMO='${SEED_DEMO:-1}' \
+       node $ENV_FILE server.js 2>&1 | tee '$LOG'"
     if [ "$HAVE_SESSION" = "1" ]; then
       tmux split-window -t "$SESSION" -c "$HERE" "$API_CMD"
     else

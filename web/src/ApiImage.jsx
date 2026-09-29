@@ -24,13 +24,16 @@ export default function ApiImage({ path, alt, className, style, onError }) {
     setUrl(null);
     setFailed(false);
 
-    // no-store, deliberately. Express sends an ETag, so a response cached
-    // while something was misconfigured comes back as a 304 and the browser
-    // reuses the stored headers with it — including a wrong content type. The
-    // picture then stays broken after the server is fixed, which is a very
-    // expensive hour to spend. These are small images fetched one case at a
-    // time; correctness is worth the re-download.
-    fetch(API_BASE + path, { credentials: "include", cache: "no-store", headers: API_HEADERS })
+    // The browser cache is allowed to answer this. `cache: "no-store"` here
+    // used to defeat the server's own header, so every overlay flip re-fetched
+    // the whole image through the tunnel.
+    //
+    // What makes that safe is the content-type check below: it runs on a
+    // cached response exactly as it does on a fresh one, because the stored
+    // headers come back with the stored bytes. So a response that was cached
+    // while something was misconfigured is caught and shown as an error, not
+    // rendered as a broken picture.
+    fetch(API_BASE + path, { credentials: "include", headers: API_HEADERS })
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const ct = r.headers.get("content-type") || "";

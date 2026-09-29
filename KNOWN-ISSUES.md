@@ -6,12 +6,15 @@ Open items first, then what has been resolved.
 
 ## Open
 
-### The lesion marks have never been checked by eye
-The six lesion models report counts and the case screen draws marks, but nobody
-has opened a graded case and confirmed a mark sits on the lesion it names. Until
-someone does, the positions are unverified — the numbers are the claim, the
-drawing is decoration. NV in particular is shown as "not assessed" rather than
-"0" because its recall is not credible.
+### The lesion marks are eyeballed, not measured
+*Checked 24 Sep 2026.* Opened a graded case and confirmed the marks land on the
+lesions they name — so the drawing is not decoration, which is what was in doubt.
+
+That is one pair of eyes on a handful of cases, not a measurement. No
+localisation metric has been computed against ground-truth masks, so the honest
+claim is "the overlay is consistent with the finding", not "the positions are
+accurate to within X". NV is still shown as "not assessed" rather than "0",
+because its recall is not credible whatever the marks look like.
 
 ### The tunnel is a single point of failure
 A cloudflared quick tunnel fronts the API and hands out a new hostname every
