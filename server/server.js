@@ -542,7 +542,15 @@ app.get("/api/email/verify", verifyIpLimit, (req, res) => {
   db.prepare(
     "UPDATE doctors SET EmailVerified = 1, VerifyTokenHash = NULL, VerifyTokenExpiry = NULL WHERE DoctorID = ?"
   ).run(doc.DoctorID);
-  res.json({ ok: true });
+
+  // The same browser is trusted here, so signing up costs one email and one
+  // click instead of two. Confirming an address and approving a browser prove
+  // the identical fact - that this person reads that mailbox - and asking for
+  // it twice in a row only teaches people to click approval links without
+  // reading them. Whoever holds the mailbox could approve any browser anyway;
+  // the token skips the email step, never the password.
+  issueTrustedDevice(res, doc.DoctorID);
+  res.json({ ok: true, browserTrusted: true });
 });
 
 /**
@@ -626,14 +634,20 @@ app.post("/api/logout", (req, res) => {
   }
   res.clearCookie("rx", sessionCookieOptions());
 
-  // Signing out is a statement about this machine, so the machine stops being
-  // trusted: the row goes, and the next sign-in from here asks for approval by
-  // email again. Leaving it would keep a borrowed laptop trusted for 30 days
-  // after the doctor thought they had left.
-  const deviceToken = req.cookies[DEVICE_COOKIE];
-  if (deviceToken) {
-    db.prepare("DELETE FROM trusted_devices WHERE DeviceTokenHash = ?").run(sha256(deviceToken));
-    res.clearCookie(DEVICE_COOKIE, sessionCookieOptions());
+  // Signing out ends the SESSION. It no longer distrusts the browser, because
+  // this token is a convenience and not a credential: it skips the email
+  // approval step, never the password. Deleting it on every sign-out meant a
+  // doctor who signs out at the end of each day waits for an email every
+  // morning - and that trains people to stop reading approval mails, which is
+  // worse than what the deletion was guarding against.
+  //
+  // ?forget=1 is the deliberate version, for a borrowed machine.
+  if (req.query?.forget === "1") {
+    const deviceToken = req.cookies[DEVICE_COOKIE];
+    if (deviceToken) {
+      db.prepare("DELETE FROM trusted_devices WHERE DeviceTokenHash = ?").run(sha256(deviceToken));
+      res.clearCookie(DEVICE_COOKIE, sessionCookieOptions());
+    }
   }
   res.sendStatus(204);
 });

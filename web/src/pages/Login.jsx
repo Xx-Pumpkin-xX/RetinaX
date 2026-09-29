@@ -118,7 +118,7 @@ export default function Login({ onSignedIn }) {
     await api.verifyEmail(tokenFromUrl());
     window.history.replaceState({}, "", "/login");
     go("login");
-    setNote("Your address is confirmed. Sign in to continue.");
+    setNote("Your address is confirmed and this browser is trusted for 30 days. Sign in to continue.");
   });
 
   const submitReset = (e) => {
@@ -276,7 +276,8 @@ export default function Login({ onSignedIn }) {
             <div className="stack" style={{ gap: 5 }}>
               <div style={{ fontSize: 16, fontWeight: 600 }}>Confirm your address</div>
               <div className="muted" style={{ fontSize: 13 }}>
-                The last step of signing up. This does not change your password.
+                The last step of signing up. This browser is trusted at the same time,
+                so there is no second email to wait for. Your password does not change.
               </div>
             </div>
             {error && <div className="err">{error}</div>}
