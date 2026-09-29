@@ -31,6 +31,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, Query, UploadFile
 from fastapi.responses import JSONResponse
+
+# Trần độ dài câu trả lời của trợ lý. Đổi được qua biến môi trường để
+# không phải đóng lại tar chỉ vì một con số.
+CHAT_NUM_PREDICT = int(os.environ.get("CHAT_NUM_PREDICT", "700"))
 from PIL import Image
 
 # start implement chatbot here
@@ -580,11 +584,13 @@ the model prediction and their assessment.
 
                 "options": {
                     "temperature": 0.2,
-                    # Đủ chỗ cho cả ca bệnh lẫn lịch sử hội thoại trong một
-                    # lượt, và chặn câu trả lời ở độ dài đọc được trên màn
-                    # hình ca bệnh thay vì để mô hình viết tràn.
+                    # Đủ chỗ cho cả ca bệnh lẫn lịch sử hội thoại trong một lượt.
                     "num_ctx": 8192,
-                    "num_predict": 220,
+                    # num_predict KHÔNG bảo mô hình viết ngắn — nó cắt ngang khi
+                    # hết token, thường giữa một câu. 220 quá chặt: câu trả lời
+                    # đứt đoạn. Muốn ngắn thì nói trong system prompt; trần này
+                    # để dành cho trường hợp mô hình viết tràn thật sự.
+                    "num_predict": CHAT_NUM_PREDICT,
                 },
             },
             timeout=60,
@@ -599,8 +605,16 @@ the model prediction and their assessment.
         if not reply:
             raise RuntimeError("Ollama returned an empty response")
 
+        # Ollama says why it stopped. "length" means the answer was chopped at
+        # the token cap, and a clinician reading a sentence that simply ends is
+        # owed that fact rather than left to guess.
+        truncated = data.get("done_reason") == "length"
+        if truncated:
+            reply += "\n\n_[cut short at the length limit]_"
+
         return {
-            "reply": reply
+            "reply": reply,
+            "truncated": truncated,
         }
 
     except Exception as exc:

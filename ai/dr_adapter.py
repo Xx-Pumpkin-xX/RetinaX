@@ -32,6 +32,9 @@ USE_CBAM = os.environ.get("USE_CBAM", "1") == "1"
 # a single pass would shift the score distribution slightly and quietly
 # mis-calibrate every threshold, so the default matches training.
 USE_TTA = os.environ.get("USE_TTA", "1") == "1"
+# Off by default: it is a memory layout change, and this file's rule is that
+# anything which can move a score has to be measured before it ships.
+USE_CHANNELS_LAST = os.environ.get("USE_CHANNELS_LAST", "0") == "1"
 
 # The Spark is shared. Another user's training run can take most of the 128 GB
 # of unified memory and leave nothing for inference. Rather than dying, fall
@@ -202,6 +205,17 @@ def load_model():
         m = obj      # a pickled nn.Module
 
     _model = m.eval().to(_device)
+
+    # The input shape never varies - IMAGE_SIZE is fixed - so cuDNN can autotune
+    # its convolution algorithms once on the first forward and reuse the choice
+    # for every image after it. On a varying shape this is a pessimisation; here
+    # it is free.
+    if getattr(_device, "type", "") == "cuda":
+        import torch as _t
+        _t.backends.cudnn.benchmark = True
+        if USE_CHANNELS_LAST:
+            _model = _model.to(memory_format=_t.channels_last)
+
     load_thresholds()
     print(f"[model] {MODEL_NAME} | cbam={USE_CBAM} | {IMAGE_SIZE}px | {_device} | tta={USE_TTA}")
     return _model
@@ -266,7 +280,25 @@ def predict_score_views(x):
             views = [x]
             if USE_TTA:
                 views += [torch.flip(x, dims=[3]), torch.flip(x, dims=[2])]  # h-flip, v-flip
-            return [float(model(v.to(_device)).squeeze()) for v in views]
+            if len(views) == 1:
+                return [float(model(views[0].to(_device)).squeeze())]
+
+            # One forward over the stacked views instead of one per view. Same
+            # model, same views, same arithmetic for each image - but a batch of
+            # one is the worst case on this machine: B7 is dominated by depthwise
+            # convolutions, which are bandwidth-bound, so a single-image forward
+            # spends most of its time reading weights that the next two views
+            # then read again. Batched, the weights are paid for once.
+            batch = torch.cat(views, dim=0).to(_device)
+            if USE_CHANNELS_LAST:
+                batch = batch.contiguous(memory_format=torch.channels_last)
+            try:
+                return [float(v) for v in model(batch).reshape(-1)]
+            except Exception as e:
+                if not _is_oom(e):
+                    raise
+                # Three at once did not fit. One at a time still does.
+                return [float(model(v.to(_device)).squeeze()) for v in views]
 
     return run_resilient(_run)
 
@@ -353,6 +385,7 @@ def health():
         "use_cbam": USE_CBAM,
         "image_size": IMAGE_SIZE,
         "tta": USE_TTA,
+        "channels_last": USE_CHANNELS_LAST,
         "thresholds": _thresholds,
         # Unambiguous on purpose: "fallback" here means the grades are wrong,
         # and nothing else in the response would tell you.
