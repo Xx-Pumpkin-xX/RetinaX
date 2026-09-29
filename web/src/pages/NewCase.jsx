@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { api } from "../api.js";
+import useLeaveGuard from "../useLeaveGuard.js";
 
 const EYES = [
   { key: "OD", label: "Right eye", sub: "OD · oculus dexter" },
@@ -36,19 +37,11 @@ export default function NewCase({ onDirtyChange }) {
     Boolean((images.OD && !saved.OD) || (images.OS && !saved.OS))
   );
 
-  // Đóng tab / reload / gõ URL khác / rời website — trình duyệt tự hỏi xác nhận.
+  // Đóng tab / reload / gõ URL khác / bấm Back — đều hỏi xác nhận.
+  useLeaveGuard(dirty);
   useEffect(() => {
     onDirtyChange(dirty);
-    function handleBeforeUnload(e) {
-      if (!dirty) return;
-      e.preventDefault();
-      e.returnValue = "";
-    }
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => {
-      window.removeEventListener("beforeunload", handleBeforeUnload);
-      onDirtyChange(false);
-    };
+    return () => onDirtyChange(false);
   }, [dirty, onDirtyChange]);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });

@@ -5,6 +5,7 @@ import ApiImage from "../ApiImage.jsx";
 import RegionOverlay from "../RegionOverlay.jsx";
 import LesionBar, { LESIONS } from "../LesionBar.jsx";
 import NextEyeButton from "./NextEyeButton.jsx";
+import useLeaveGuard from "../useLeaveGuard.js";
 
 const when = (iso) =>
   new Date(iso).toLocaleString("en-GB",
@@ -59,20 +60,13 @@ function CaseDetailInner() {
 
   const resultQueue = location.state?.resultQueue ?? null;
   const resultStep = location.state?.resultStep ?? 0;
-  const hasNextResult = resultQueue && resultStep < resultQueue.length - 1;
-  const nextResultId = hasNextResult ? resultQueue[resultStep + 1] : null;
 
-  const dirty = editing !== null || agreement !== null;
+  // A typed note is unsaved work before any agree/disagree is picked. It was
+  // missing from this test, so leaving threw the text away without asking.
+  const dirty = editing !== null || agreement !== null
+    || corrected !== null || reason.trim() !== "";
 
-  useEffect(() => {
-    function handleBeforeUnload(e) {
-      if (!dirty) return;
-      e.preventDefault();
-      e.returnValue = "";
-    }
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [dirty]);
+  useLeaveGuard(dirty);
 
   useEffect(() => {
     if (!confirmDelete) return;
@@ -218,10 +212,18 @@ function CaseDetailInner() {
             <span className="muted">{c.eye === "OD" ? "Right eye · OD" : "Left eye · OS"}</span>
           </div>
         </div>
-        <div className="row" style={{ gap: 10 }}>
-          {/* Hidden while the "Result x of y" card below is showing, so there
-              are never two next-eye buttons on screen at once. */}
-          {!hasNextResult && <NextEyeButton dirty={dirty} />}
+        {/* One control for one action. There used to be two - this button, and
+            a separate card below carrying its own button - and which appeared
+            depended on whether the case was reached from an upload, so the same
+            case had two different screens. The card's only real content, the
+            position in the upload queue, is now a word beside the button. */}
+        <div className="row" style={{ gap: 10, alignItems: "center" }}>
+          {resultQueue && (
+            <span className="muted" style={{ fontSize: 12.5 }}>
+              Result {resultStep + 1} of {resultQueue.length}
+            </span>
+          )}
+          <NextEyeButton dirty={dirty} />
           <span className={graded ? "pill pill-live" : "pill"}
                 style={failed ? { color: "var(--g4)", borderColor: "var(--g4)" } : undefined}>
             {reviewed ? "Reviewed"
@@ -231,20 +233,6 @@ function CaseDetailInner() {
           </span>
         </div>
       </div>
-
-      {hasNextResult && (
-        <div className="card row" style={{ padding: 12, gap: 12, justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ fontSize: 13.5 }}>
-            Result {resultStep + 1} of {resultQueue.length} for this patient.
-          </span>
-          <button className="btn btn-ghost" type="button"
-                  onClick={() => navigate(`/cases/${nextResultId}`, {
-                    state: { resultQueue, resultStep: resultStep + 1 },
-                  })}>
-            Next eye's result →
-          </button>
-        </div>
-      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 380px", gap: 18, alignItems: "start" }}>
 
@@ -381,6 +369,13 @@ function CaseDetailInner() {
                   ))}
                 </div>
               </div>
+
+              {c.otherEyes > 0 && (
+                <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+                  Year of birth and sex describe the patient, not this photograph, so saving
+                  writes them to this patient's other {c.otherEyes === 1 ? "eye" : `${c.otherEyes} eyes`} too.
+                </div>
+              )}
 
               {detailsError && <div className="err">{detailsError}</div>}
 

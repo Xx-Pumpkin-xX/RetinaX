@@ -735,6 +735,15 @@ const caseRow = (row, full = false) => ({
   // The screen only offers a method it actually has a map for.
   overlays: [row.HeatmapCamPath && "cam", row.HeatmapCcemPath && "ccem"].filter(Boolean),
   ...(full ? {
+    // Other eyes on file under this patient code. The details form uses it to
+    // say, before saving, that the edit reaches them too.
+    // Guarded: a row without DoctorID would bind undefined and 500 the whole
+    // case screen over a count nothing depends on.
+    otherEyes: row.DoctorID
+      ? db
+          .prepare("SELECT COUNT(*) AS n FROM cases WHERE DoctorID = ? AND PatientCode = ? AND CaseID <> ?")
+          .get(row.DoctorID, row.PatientCode, row.CaseID).n
+      : 0,
     // Marked areas in the photograph's own pixels, with the frame they are
     // measured in. Parsed here so a corrupt row degrades to "no regions"
     // rather than breaking the whole case screen.
@@ -894,6 +903,38 @@ function eyeTaken(doctorId, patientCode, eye, exceptCaseId = null) {
 }
 
 /**
+ * Year of birth and sex describe the patient, not the photograph. They sit on
+ * every case row because there is no patients table, so nothing in the schema
+ * stopped one code carrying two of each - which is how the right eye could say
+ * born 1968, F while the left said 1972, M for the same person.
+ *
+ * This is the missing constraint. The first case filed under a code fixes who
+ * the patient is; every later case has to agree with it.
+ */
+function patientIdentity(doctorId, patientCode, exceptCaseId = null) {
+  return db
+    .prepare(
+      `SELECT BirthYear, PatientSex FROM cases
+        WHERE DoctorID = ? AND PatientCode = ? AND Status <> 'FAILED' AND CaseID <> ?
+        ORDER BY CreatedAt LIMIT 1`
+    )
+    .get(doctorId, patientCode, exceptCaseId ?? "");
+}
+
+const sexLabel = (s) => (s === "F" || s === "M" ? s : "blank");
+
+/** The disagreements, in words, or null when there are none. */
+function identityMismatch(known, birthYear, patientSex) {
+  if (!known) return null;
+  const out = [];
+  if (known.BirthYear !== birthYear) out.push(`born ${known.BirthYear}, not ${birthYear}`);
+  if ((known.PatientSex ?? null) !== patientSex) {
+    out.push(`sex ${sexLabel(known.PatientSex)}, not ${sexLabel(patientSex)}`);
+  }
+  return out.length ? out : null;
+}
+
+/**
  * Drop earlier failed attempts at the same eye once one of them works.
  *
  * A failed case holds nothing a clinician can use — no grade, no explanation,
@@ -926,7 +967,7 @@ async function dropSupersededFailures(doctorId, patientCode, eye, keepCaseId) {
 }
 
 app.post("/api/cases", auth, uploadUserLimit, aiUserConcurrency, aiGlobalConcurrency, upload.single("image"), async (req, res) => {
-  const { patientSex } = req.body || {};
+  const patientSex = req.body?.patientSex ? String(req.body.patientSex).trim().toUpperCase() : null;
   const patientCode = String(req.body?.patientCode ?? "").trim();
   const eyePosition = String(req.body?.eyePosition ?? "").trim().toUpperCase();
   const birthYear = Number(String(req.body?.birthYear ?? "").trim());
@@ -957,6 +998,23 @@ app.post("/api/cases", auth, uploadUserLimit, aiUserConcurrency, aiGlobalConcurr
     });
   }
 
+  if (patientSex && !["F", "M"].includes(patientSex)) {
+    return reject(400, { error: "Sex must be F or M, or left blank" });
+  }
+
+  const known = patientIdentity(req.doctorId, patientCode);
+  const mismatch = identityMismatch(known, birthYear, patientSex);
+  if (mismatch) {
+    return reject(409, {
+      error: `${patientCode} is already on file as ${mismatch.join(", ")}. `
+           + `Fix the details, or file this eye under a different code.`,
+      code: "PATIENT_MISMATCH",
+      patientCode,
+      birthYear: known.BirthYear,
+      patientSex: known.PatientSex ?? null,
+    });
+  }
+
   const id = randomUUID();
   const now = new Date().toISOString();
   db.prepare(
@@ -964,7 +1022,7 @@ app.post("/api/cases", auth, uploadUserLimit, aiUserConcurrency, aiGlobalConcurr
                         EyePosition, ImagePath, Status, CreatedAt)
      VALUES (?,?,?,?,?,?,?,'PROCESSING',?)`
   ).run(id, req.doctorId, patientCode, birthYear,
-        patientSex || null, eyePosition, req.file.path, now);
+        patientSex, eyePosition, req.file.path, now);
 
   try {
     const { grade, camPath, ccemPath, regions, imageWidth, imageHeight, suppressionReason, lesions } =
@@ -1181,6 +1239,20 @@ app.post("/api/cases/:id/details", auth, (req, res) => {
     });
   }
 
+  // Moving a case to a different code lands it on someone else's identity, so
+  // that one has to agree. Within the same code this edit IS the new truth and
+  // the other eyes follow it below.
+  if (patientCode !== row.PatientCode) {
+    const clash = identityMismatch(
+      patientIdentity(req.doctorId, patientCode, req.params.id), birthYear, patientSex);
+    if (clash) {
+      return res.status(409).json({
+        error: `${patientCode} is already on file as ${clash.join(", ")}.`,
+        code: "PATIENT_MISMATCH",
+      });
+    }
+  }
+
   const changed = [];
   if (row.PatientCode !== patientCode) changed.push(`code ${row.PatientCode} -> ${patientCode}`);
   if (row.EyePosition !== eyePosition) changed.push(`eye ${row.EyePosition} -> ${eyePosition}`);
@@ -1199,8 +1271,28 @@ app.post("/api/cases/:id/details", auth, (req, res) => {
   // the clinic's own records. Changing one is not a formatting tweak.
   console.log(`[details] ${req.params.id.slice(0, 8)} by ${req.doctorId.slice(0, 8)}: ${changed.join(", ")}`);
 
+  // The patient's details, not this photograph's. Editing them on one eye and
+  // leaving the other saying something else is the hole this closes. The count
+  // goes back so the screen can say what it touched rather than change rows
+  // behind the doctor's back.
+  const spread = db
+    .prepare(
+      `UPDATE cases SET BirthYear = ?, PatientSex = ?, UpdatedAt = ?
+        WHERE DoctorID = ? AND PatientCode = ? AND CaseID <> ?
+          AND (BirthYear IS NOT ? OR PatientSex IS NOT ?)`
+    )
+    .run(birthYear, patientSex, new Date().toISOString(),
+         req.doctorId, patientCode, req.params.id, birthYear, patientSex);
+  if (spread.changes) {
+    console.log(`[details] ${req.params.id.slice(0, 8)}: same details written to ${spread.changes} other case(s) under ${patientCode}`);
+  }
+
   const updated = ownCase(req.params.id, req.doctorId);
-  res.json({ ...caseRow(updated, true), reviews: reviewHistory(req.params.id) });
+  res.json({
+    ...caseRow(updated, true),
+    reviews: reviewHistory(req.params.id),
+    alsoUpdated: spread.changes,
+  });
 });
 
 /**
