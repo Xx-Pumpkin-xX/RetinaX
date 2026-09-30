@@ -410,6 +410,32 @@ proves nothing, because it skips both steps.
 
 ---
 
+## The assistant, and what it is allowed to do
+
+Two conversations, one model host:
+
+    app-wide     browser -> API /api/chat            -> proxy:11500 -> ollama
+    per case     browser -> API /api/cases/:id/chat  -> Spark :8000 -> ollama
+
+The per-case one puts the case record in front of the model, and that record
+contains a clinician's free-text note. The note is quoted between `<<<NOTE` and
+`NOTE>>>` and labelled as data; those two markers are stripped from the note
+itself, because a note that can close the quotation can write outside it. The
+note is truncated at `CHAT_NOTE_LIMIT` (1500). Nothing else is filtered.
+
+That is mitigation, not prevention — prompt injection has no complete defence.
+The property that holds is structural, and it is the one to state if anybody
+asks:
+
+**The assistant has no write path.** It cannot change a grade (`predictions.Grade`
+is never updated by any route, BR-4), cannot create, edit or delete a case, and
+writes nothing to the database — neither chat route touches SQL. A successful
+injection produces a wrong sentence on screen and nothing else.
+
+Ollama itself has no authentication and no rate limiting of its own. It is
+reachable only over the tailnet, through the proxy, from the API. It must never
+be exposed through the public tunnel.
+
 ## Deploying a new build
 
 prts-0 runs from an unpacked tar, not from git, so `git push` alone changes
