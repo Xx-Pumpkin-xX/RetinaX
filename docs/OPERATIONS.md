@@ -376,11 +376,31 @@ on the machine you will actually be using.
 Signing in from a browser that is not trusted sends an approval link instead,
 valid 15 minutes.
 
-Signing out ends the session — the token id goes into `revoked_sessions`, so a
-copy of the cookie stops working everywhere — but leaves the browser trusted.
-The device token skips the email step, never the password. `POST
-/api/logout?forget=1` is the version that also distrusts the browser, for a
-borrowed machine.
+Signing out ends the session **and** this browser's trust: the token id goes
+into `revoked_sessions` so a copy of the cookie stops working everywhere, and
+the `trusted_devices` row is deleted, so the next sign-in from here waits for an
+approval email again. That is deliberate. The second step exists to prove the
+person holds the mailbox, and an explicit sign-out is the moment to ask for that
+proof again; a shared machine left trusted for thirty days after the doctor
+thought they had left is what it prevents.
+
+Two clocks, and the doctor sets the second one:
+
+| | Set by | Length | Ends when |
+|---|---|---|---|
+| Address confirmed | the link in the sign-up email | forever | never |
+| Browser remembered | the **Trust this browser for 30 days** box | 30 days | sign-out, 30 days, or a password reset |
+
+There used to be three, and two of them were invisible: the session ran 14 days
+or 1, the browser stayed trusted for 30 whatever happened, and nothing on screen
+said either number. So a browser left alone asked for the password on day 14 and
+for an email on day 30, for reasons the doctor could not have predicted.
+
+Now one tick decides both. Ticked: this browser is remembered and signed in for
+thirty days. Unticked: the session lasts a day, and any trust this browser had is
+dropped immediately — unticking is an instruction to forget the machine, which is
+what someone on a shared computer means by it. Approving a sign-in link does not
+override the choice: the box was already ticked or not when the mail was sent.
 
 `DEMO_EMAILS` in `host.env` lists the accounts exempt from confirmation and
 approval, so the demo can be signed into from any machine in the room.

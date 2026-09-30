@@ -70,18 +70,32 @@ hidden the moment the vault is mounted over them — and `/api/health` reported
 exists or `VAR_DIR` is a mount point. The documentation had claimed this guard
 existed for some time before the code did.
 
-### Sign-out made the next sign-in wait for an email
-*Fixed 29 Sep 2026.*
+### Signing up told people to sign in before confirming
+*Fixed 30 Sep 2026.*
 
-Signing out deleted the browser's trusted-device row, so anyone who signs out at
-the end of the day waited for an approval mail every morning — which trains
-people to click approval links without reading them, the opposite of what the
-mechanism is for. Sign-out now ends the session only. `POST /api/logout?forget=1`
-is the deliberate version for a borrowed machine.
+The message after sign-up read "Sign in to confirm this browser and continue",
+so people went to the sign-in form — where they were refused with 403 until the
+address was confirmed, and only then thought to open the email. It now names the
+address and says to open the link first.
 
-Confirming an address now also trusts the browser that opened the link, so
-signing up costs one email and one click instead of two. Both steps prove the
-same fact: that this person reads that mailbox.
+Confirming an address also trusts the browser that opened the link, so signing
+up costs one email and one click rather than two. Both steps prove the same
+fact: that this person reads that mailbox.
+
+### Sign-out: what it ends, and why
+*Settled 30 Sep 2026.*
+
+Briefly, on 29 Sep, sign-out was changed to end the session but leave the
+browser trusted — the argument being that a doctor who signs out nightly should
+not wait for a mail each morning, because that teaches people to click approval
+links without reading them.
+
+That was reverted the next day, deliberately. The second step exists to prove
+the person holds the mailbox, and an explicit sign-out is exactly the moment to
+ask for that proof again; two-step verification that survives signing out is not
+really two-step. A shared or borrowed machine left trusted for thirty days after
+the doctor thought they had left is the thing being prevented. The daily-email
+cost is accepted, and it is the reason "keep me signed in" exists.
 
 ### The confirmation link opened the password reset form
 *Fixed 29 Sep 2026.*

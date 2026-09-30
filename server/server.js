@@ -172,8 +172,22 @@ function tokenEpoch(doctorId) {
   return db.prepare("SELECT TokenEpoch FROM doctors WHERE DoctorID = ?").get(doctorId)?.TokenEpoch ?? 0;
 }
 
-function issueSession(res, doctorId, keepSignedIn) {
-  const days = keepSignedIn ? 14 : 1;
+// How long a remembered browser stays remembered - and, since that became one
+// choice, how long its session lasts too.
+const DEVICE_COOKIE = "rx_device";
+const DEVICE_DAYS = 30;
+
+/**
+ * One choice, one number.
+ *
+ * There used to be two clocks and a doctor could not see either: the session
+ * lasted 14 days or 1, and the browser stayed trusted for 30 regardless. So a
+ * browser left alone asked for the password again on day 14 and for an email on
+ * day 30, and no tick box explained either. `remember` now drives both, and the
+ * checkbox that sets it says exactly what it buys: this browser, thirty days.
+ */
+function issueSession(res, doctorId, remember) {
+  const days = remember ? DEVICE_DAYS : 1;
   // jwtid gives the session a name, which is the whole basis for being able to
   // revoke it later. Tokens issued before this existed simply have no jti and
   // cannot be revoked; they expire on their own within a fortnight.
@@ -192,8 +206,6 @@ function issueSession(res, doctorId, keepSignedIn) {
   });
 }
 
-const DEVICE_COOKIE = "rx_device";
-const DEVICE_DAYS = 30;
 const LOGIN_VERIFY_MINUTES = 15;
 
 /**
@@ -219,6 +231,14 @@ function issueTrustedDevice(res, doctorId) {
     ...sessionCookieOptions(),
     maxAge: DEVICE_DAYS * 24 * 60 * 60 * 1000,
   });
+}
+
+/** Drop this browser's trust, wherever that is decided. */
+function forgetThisBrowser(req, res) {
+  const token = req.cookies[DEVICE_COOKIE];
+  if (!token) return;
+  db.prepare("DELETE FROM trusted_devices WHERE DeviceTokenHash = ?").run(sha256(token));
+  res.clearCookie(DEVICE_COOKIE, sessionCookieOptions());
 }
 
 function hasTrustedDevice(req, doctorId) {
@@ -498,18 +518,31 @@ app.post("/api/login", loginIpLimit, loginAccountLimit, async (req, res) => {
       to: doc.Email,
       subject: "Approve this RetinaX.ai sign-in",
       text: [
-        "A sign-in to your RetinaX.ai account was requested from a new browser or device.",
+        "A sign-in to your RetinaX.ai account was requested from a browser we do not recognise.",
         "",
         "Approve it with this link:",
         link,
         "",
-        `This link expires in ${LOGIN_VERIFY_MINUTES} minutes. If this was not you, ignore this email.`,
+        "Whether that browser is then remembered depends on the box you ticked when",
+        "you signed in, not on this link.",
+        "",
+        `This link expires in ${LOGIN_VERIFY_MINUTES} minutes. If this was not you, ignore this`,
+        "email — nothing happens without it, and your password still protects the account.",
       ].join("\n"),
     });
     loginAccountLimit.reset(req);
     return res.json({ verificationRequired: true, delivery: mailConfigured() ? "email" : "unconfigured" });
   }
 
+  // The tick box is the whole decision. Ticked, this browser is remembered and
+  // skips the email step until it expires or the doctor signs out. Unticked, any
+  // trust it had is dropped on the spot - not ignored, dropped - because a
+  // doctor who unticks it on a shared machine is telling us to forget it.
+  if (keepSignedIn) {
+    issueTrustedDevice(res, doc.DoctorID);
+  } else {
+    forgetThisBrowser(req, res);
+  }
   issueSession(res, doc.DoctorID, keepSignedIn);
   // A correct password clears the account-specific failure bucket so normal
   // repeated sign-ins do not inherit earlier mistakes for the full window.
@@ -570,10 +603,14 @@ app.post("/api/signup", signupIpLimit, async (req, res) => {
     text: [
       "Welcome to RetinaX.ai.",
       "",
-      "Confirm your email address with this link:",
+      "Confirm your email address with this link, then sign in:",
       verifyLink,
       "",
-      "This link expires in 24 hours.",
+      "Open it on the computer you will actually be using. Confirming also trusts",
+      "that browser, so there is no second email to wait for — but the trust follows",
+      "the browser that opens the link, not the one you signed up on.",
+      "",
+      "This link expires in 24 hours. Until it is opened, signing in is refused.",
     ].join("\n"),
   });
 
@@ -650,6 +687,8 @@ app.post("/api/email/resend", forgotIpLimit, forgotAccountLimit, async (req, res
         "",
         link,
         "",
+        "Open it on the computer you will actually be using, then sign in.",
+        "",
         "This link expires in 24 hours and replaces any earlier one.",
       ].join("\n"),
     });
@@ -670,10 +709,11 @@ app.get("/api/login/verify", verifyIpLimit, (req, res) => {
   db.prepare("DELETE FROM login_verifications WHERE VerifyTokenHash = ?").run(verification.VerifyTokenHash);
   const doctor = db.prepare("SELECT DoctorID, FullName FROM doctors WHERE DoctorID = ?").get(verification.DoctorID);
   if (!doctor) return res.status(400).json({ error: "This login link is no longer valid." });
-  issueTrustedDevice(res, doctor.DoctorID);
-  // The length of the session was the doctor's choice on the sign-in form, not
-  // something approving the link should decide for them.
-  issueSession(res, doctor.DoctorID, Boolean(verification.KeepSignedIn));
+  // Approving the link does not override the choice made on the sign-in form:
+  // if the box was not ticked, this browser is approved for this sign-in only.
+  const remember = Boolean(verification.KeepSignedIn);
+  if (remember) issueTrustedDevice(res, doctor.DoctorID);
+  issueSession(res, doctor.DoctorID, remember);
   res.json({ id: doctor.DoctorID, fullName: doctor.FullName });
 });
 
@@ -697,21 +737,19 @@ app.post("/api/logout", (req, res) => {
   }
   res.clearCookie("rx", sessionCookieOptions());
 
-  // Signing out ends the SESSION. It no longer distrusts the browser, because
-  // this token is a convenience and not a credential: it skips the email
-  // approval step, never the password. Deleting it on every sign-out meant a
-  // doctor who signs out at the end of each day waits for an email every
-  // morning - and that trains people to stop reading approval mails, which is
-  // worse than what the deletion was guarding against.
+  // Signing out ends the session AND this browser's trust, so the next sign-in
+  // from here needs the emailed approval again.
   //
-  // ?forget=1 is the deliberate version, for a borrowed machine.
-  if (req.query?.forget === "1") {
-    const deviceToken = req.cookies[DEVICE_COOKIE];
-    if (deviceToken) {
-      db.prepare("DELETE FROM trusted_devices WHERE DeviceTokenHash = ?").run(sha256(deviceToken));
-      res.clearCookie(DEVICE_COOKIE, sessionCookieOptions());
-    }
-  }
+  // This is the product decision, not an implementation detail: the second step
+  // exists to prove the person holds the mailbox, and an explicit sign-out is
+  // the moment to ask for that proof again. Leaving a borrowed or shared machine
+  // trusted for thirty days after the doctor thought they had left is the thing
+  // being prevented. The cost is that someone who signs out daily waits for a
+  // mail each morning; that is accepted.
+  //
+  // Device trust also lapses on its own after DEVICE_DAYS, so a browser that is
+  // never signed out still comes back to the email step eventually.
+  forgetThisBrowser(req, res);
   res.sendStatus(204);
 });
 
@@ -749,6 +787,10 @@ app.post("/api/password/forgot", forgotIpLimit, forgotAccountLimit, async (req, 
         "",
         `Open this link to choose a new one. It works once and expires in ${RESET_MINUTES} minutes:`,
         link,
+        "",
+        "Changing the password signs the account out everywhere and makes every",
+        "remembered browser ask for an email again. If you are doing this because you",
+        "think someone else has your password, that is what removes them.",
         "",
         "If this was not you, ignore this message — nothing has changed.",
       ].join("\n"),

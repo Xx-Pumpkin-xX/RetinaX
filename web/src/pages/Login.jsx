@@ -100,7 +100,14 @@ export default function Login({ onSignedIn }) {
     run(async () => {
       const out = await api.signup(fullName, email, password);
       setEmail(email);
-      setNote("Your account was created. Sign in to confirm this browser and continue.");
+      // Confirmation comes FIRST. Signing in before the address is confirmed is
+      // refused with 403, so telling them to sign in here sent them to a door
+      // that was locked, and they read the email only after being turned away.
+      setNote(
+        out?.verificationRequired
+          ? `Account created. We sent a confirmation link to ${email} — open it, then sign in here.`
+          : "Your account is ready. Sign in to continue."
+      );
       setView("login");
     });
   };
@@ -207,7 +214,7 @@ export default function Login({ onSignedIn }) {
 
             <label className="row" style={{ gap: 9, fontSize: 13.5, cursor: "pointer" }}>
               <input type="checkbox" checked={keep} onChange={(e) => setKeep(e.target.checked)} />
-              Keep me signed in
+              Trust this browser for 30 days
             </label>
 
             {error && <div className="err">{error}</div>}
