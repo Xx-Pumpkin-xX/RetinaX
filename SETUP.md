@@ -225,36 +225,46 @@ The contract to keep: `/infer` returns `{"grade": 0-4, "heatmap_png_base64": ...
 and **nothing else**. The regression score and the thresholds stay inside this
 service — that is the reason it is a separate process.
 
-## 2.4 · Start it, with a public URL
+## 2.4 · Start it — on a private network, never a public one
 
 ```bash
-./run-on-dgx.sh
+bash retinax-ai/start-all-dgx.sh
 ```
 
-That starts uvicorn on `0.0.0.0:8000` and a Cloudflare tunnel in front of it,
-both inside `tmux` so they survive your SSH session closing, and prints a public
-`https://….trycloudflare.com` URL.
+That brings up the tailnet, ollama and uvicorn on `0.0.0.0:8000`, all inside
+`tmux` so they survive the terminal closing.
 
 ```bash
-./run-on-dgx.sh url     # print the URL again
-./run-on-dgx.sh stop    # stop both
-tmux attach -t retinax-ai    # watch the logs (Ctrl-B then D to detach)
+bash retinax-ai/run-on-dgx.sh status   # is it up, is the real model loaded
+bash retinax-ai/run-on-dgx.sh logs
+bash retinax-ai/run-on-dgx.sh stop
 ```
 
-Check it from your PC's browser: `https://….trycloudflare.com/health` should say
-`{"ok":true,"model_loaded":true}`. **`model_loaded:true` is how you know the real
-weights are live** — while it says `false`, you are still on the stand-in.
+> **Do not put a public tunnel in front of port 8000.** `/infer` has no
+> authentication of its own: anyone who reaches it can spend the GPU, and the
+> images they send go through the same pipeline as a patient's. Earlier versions
+> of this guide told you to expose it through Cloudflare and point `AI_URL` at
+> that hostname. That was wrong. The grading service is reached over the tailnet
+> and nothing else. The only thing that faces the internet is the API on prts-0.
 
-## 2.5 · Point your PC at it
+**`model_loaded: true` is how you know the real weights are live** — while it
+says `false`, you are still on the stand-in.
 
-In `server\.env`, replace the AI URL with the tunnel URL:
+## 2.5 · Point the API at it
+
+In `server/host.env` on prts-0, set the AI URL to the Spark's **tailnet**
+address:
 
 ```
-AI_URL=https://your-tunnel-url.trycloudflare.com
+AI_URL=http://100.126.54.48:8000
 ```
 
-Restart the API window (Ctrl-C, `npm run dev`). Upload a case — it is now being
-graded by the real model on the Spark.
+If the GPU host cannot join the tailnet, the other supported route is an SSH
+tunnel — `AI_SSH` in `host.env`, which `run-on-host.sh` opens for you. Both keep
+port 8000 off the public internet; pick whichever the machines allow.
+
+Restart the API (`bash server/run-on-host.sh stop && bash tools/start-all.sh`).
+Upload a case — it is now being graded by the real model on the Spark.
 
 Then regenerate the demo answers so they come from the real model too:
 
@@ -345,8 +355,7 @@ ai/        the grading service — the .pth, CAM and CCEM
 ```
 
 `README.md` explains the design. `DEPLOY.md` is for putting it on the internet.
-`TRACEABILITY.md` maps the UML diagrams to the code. `COMMITS.md` is the commit
-sequence for the team.
+`docs/OPERATIONS.md` is what to read when something has stopped working.
 
 ---
 

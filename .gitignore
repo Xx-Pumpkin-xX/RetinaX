@@ -75,3 +75,16 @@ ai/**/*.pth
 # ảnh dùng làm mốc đo, cố định giữa các lần chạy
 ai/baseline-images/
 retinax-backups/
+
+# Coursework and study material. These are kept on the dev machine, not here.
+# The repository holds what is needed to run the system and to bring it back up
+# when it is down; the report, the diagrams and the reading notes are not that,
+# and they go stale faster than the code they describe.
+docs/SRS.md
+docs/BRD.md
+docs/UML.md
+docs/SUMMARY.md
+docs/TECHNIQUES.md
+docs/OPTIMIZATION-BASELINE.md
+TRACEABILITY.md
+COMMITS.md

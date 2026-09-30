@@ -5,6 +5,16 @@ project has been doing the right command on the wrong machine.
 
 ---
 
+> **Bringing a machine back up is two commands, not this document.**
+> Spark first, then prts-0:
+>
+>     bash ~/Projects/USTH/ProjectDR2026/retinax-ai/start-all-dgx.sh
+>     cd ~ && bash tools/start-all.sh
+>
+> Each script checks every step before starting the next and skips whatever is
+> already running. This document is for *deploying new code*; `docs/OPERATIONS.md`
+> is for getting a broken machine running again.
+
 ## The three machines
 
 | Name | What it is | What runs there | You reach it by |
@@ -151,11 +161,20 @@ Drag the `.tar.gz` into JupyterLab on `prts-0`, into your home directory.
 
 ```bash
 cd ~                                    # server/ and tools/ sit here, not in a repo folder
-tar xzf ~/retinax-server-v1.0.0.tar.gz
+ls -la ~/retinax-server-*.tar.gz        # read the exact name, do not glob
+tar xzf ~/retinax-server-v1.1.0-<n>-g<sha>.tar.gz
 bash server/run-on-host.sh stop
-bash server/run-on-host.sh start
-bash tools/status.sh
+bash tools/start-all.sh
 ```
+
+**Type the tar's name out.** With two tars in `~`, `tar xzf ~/retinax-server-*.tar.gz`
+expands to two arguments and tar reads the second as a member name inside the
+first — which on 29 Sep 2026 silently reinstalled a build from that morning and
+cost an hour of confusion.
+
+`start-all.sh` rather than `run-on-host.sh start`: it also checks the vault, the
+assistant bridge and the tunnel, and tells you if one of them is the thing that
+is actually wrong.
 
 `prts-0` has no git checkout, so there is no `RetinaX.ai` directory there — the
 tar unpacks `server/` and `tools/` straight into your home directory. `$VAR_DIR`
@@ -163,7 +182,14 @@ points at `~/retinax-data`, outside both, which is why unpacking cannot reach th
 database.
 
 There is no `restart` subcommand — stop then start. `run-on-host.sh` runs the API
-inside `tmux`, so it survives you closing the JupyterLab tab. `logs` tails it,
+inside `tmux` **in a respawn loop**, so it survives you closing the JupyterLab tab
+and also survives the process dying: it comes back in two seconds and writes a
+`[respawn]` line saying so. `grep respawn ~/server/api.log` is how you tell a
+healthy service from one that is quietly crash-looping.
+
+It refuses to start at all if the gocryptfs vault is closed. That is deliberate:
+on a closed vault, `$VAR_DIR` is an ordinary empty directory and the API would
+start on a brand-new empty database while reporting `database ok`. `logs` tails it,
 `status` is the short version of `status.sh`.
 
 No `npm install` is needed unless `package.json` changed; the tar carries the
@@ -333,6 +359,16 @@ happened.
 automated backup. For a competition build that is a defensible trade, but say it
 plainly if a judge asks; a defended trade-off reads better than a hidden one. The
 cheap improvement is a nightly copy of `$VAR_DIR` to somewhere else on `prts-0`.
+Note that a copy inside `$VAR_DIR` is encrypted; `tools/snapshot.sh` writes to
+`~/retinax-snapshots` **outside the vault** unless `SNAPSHOT_DIR` says otherwise,
+which would put the database and every photograph on disk in the clear.
+
+**Nothing starts on boot, and one thing never can.** Five of the six processes
+could be given a systemd unit, but the vault needs a passphrase that is
+deliberately not stored on the machine — so after a power cut a person has to
+open it before anything else is worth starting. The encryption that protects the
+photographs is the same thing that prevents unattended recovery. That is a trade,
+not an oversight, and it is worth saying so in the report.
 
 **The tunnel hostname is a single point of failure.** If the tunnel is down, the
 site cannot reach the API even though the API is fine — and a cloudflared quick

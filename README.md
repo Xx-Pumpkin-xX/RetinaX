@@ -55,19 +55,24 @@ on a freshly uploaded case. The case screen offers only the methods that case
 actually has, because a tab that quietly showed a different method's picture
 would make the whole explainability claim untrue.
 
-### Data model — three tables
+### Data model — eight tables, four of them the domain
 
 | Table | What it holds |
 |---|---|
-| `doctors` | account, bcrypt password hash |
-| `cases` | patient code, birth year, sex, eye, the image, status, and the doctor's assessment |
-| `predictions` | the model's grade and its two explanation maps for a case — **write-once** |
+| `doctors` | account, bcrypt password hash, email-confirmation and reset token hashes |
+| `cases` | patient code, birth year, sex, eye, the image, status, and the current assessment |
+| `predictions` | the model's grade, its explanation maps, attention regions and lesion maps — **write-once** |
+| `reviews` | the assessment **history** — an amendment appends, never overwrites |
+| `trusted_devices` · `login_verifications` · `revoked_sessions` · `auth_attempts` | sessions and rate limiting. Every token is stored as a SHA-256 hash and every row expires |
+
+`cases` keeps the *current* assessment alongside `reviews` on purpose: the
+worklist is then one query. `reviews` is the record of how it got there.
 
 `predictions.Grade` is never updated. A doctor who disagrees writes
 `cases.CorrectedGrade` and `cases.Reason`; the model's grade stays visible next
 to it. Disagreements are the training signal for the next model version.
 
-### The four business rules the code actually enforces
+### The eight business rules the code actually enforces
 
 | | Rule | Where |
 |---|---|---|
@@ -75,6 +80,10 @@ to it. Disagreements are the training signal for the next model version.
 | BR-2 | A case can only be marked once it has been graded (`409` otherwise). | `/api/cases/:id/mark` |
 | BR-3 | Disagreeing requires **both** a grade 0–4 **and** a written reason (`400` otherwise). | `/api/cases/:id/mark` |
 | BR-4 | The doctor's correction never touches `predictions.Grade`. | the `UPDATE` only names `cases` columns |
+| BR-5 | One image per eye per patient code (`409 DUPLICATE_EYE`). | `eyeTaken()` |
+| BR-6 | Year of birth and sex describe the patient, not the photograph (`409 PATIENT_MISMATCH`). | `patientIdentity()` |
+| BR-7 | A reviewed case cannot be deleted without an explicit confirmation (`428`). | `DELETE /api/cases/:id` |
+| BR-8 | The assistant has no write path — neither chat route touches SQL. | `server/chat.js`, `ai/main.py` |
 
 ---
 
@@ -171,29 +180,44 @@ All routes require the session cookie except login and the password-reset pair.
 
 | Method | Route | |
 |---|---|---|
-| `POST` | `/api/login` | `{email, password, keepSignedIn}` |
-| `POST` | `/api/logout` | |
+| `POST` | `/api/signup` | `{fullName, email, password}` — sends a confirmation link |
+| `GET` | `/api/email/verify` | confirms the address **and** trusts that browser |
+| `POST` | `/api/email/resend` | same answer whether or not the address exists |
+| `POST` | `/api/login` | `{email, password, keepSignedIn}` — 403 until confirmed |
+| `GET` | `/api/login/verify` | approves a sign-in from an unrecognised browser |
+| `POST` | `/api/logout` | ends the session **and** this browser's trust |
 | `GET` | `/api/me` | |
 | `POST` | `/api/password/forgot` | always returns `{ok:true}` — see below |
-| `POST` | `/api/password/reset` | `{token, password}` |
+| `POST` | `/api/password/reset` | `{token, password}` — retires every existing session |
 | `GET` | `/api/cases` | the signed-in doctor's cases only |
 | `POST` | `/api/cases` | multipart: image + patient fields; grades on upload |
 | `GET` | `/api/cases/:id` | |
+| `DELETE` | `/api/cases/:id` | 428 + confirmation when the case is reviewed |
 | `POST` | `/api/cases/:id/mark` | `{agreement, correctedGrade?, reason?}` |
-| `GET` | `/api/cases/:id/image` | |
-| `GET` | `/api/cases/:id/heatmap` | |
+| `POST` | `/api/cases/:id/details` | corrects patient details across that patient's eyes |
+| `POST` | `/api/cases/:id/regrade` · `/explain` | re-runs the model or redraws the map; never writes `Grade` |
+| `POST` | `/api/cases/:id/chat` | discuss the case with the assistant — **writes nothing** |
+| `POST` | `/api/chat` | help with using the application |
+| `GET` | `/api/cases/:id/image` · `/heatmap/:method` | |
+| `GET` | `/api/health` | build, database, model, assistant, mail |
 
 **Password reset.** The token is random, single-use and expires in 30 minutes.
 Only its SHA-256 hash is stored, so a leaked database cannot be turned back into
 working reset links. `/api/password/forgot` answers identically whether or not
 the address has an account — a different answer would tell an attacker which
-doctors are registered. The link is currently printed to the server log with a
-`TODO`; wiring an email provider (Resend, SendGrid, SMTP) is a one-function
-change in `server/server.js`.
+doctors are registered. Mail goes out through the Gmail API with OAuth2
+(`server/mail.js`); when it is not configured the link is written to the server
+log instead and the sign-in screen says so rather than promising an email that
+will never arrive.
 
-There is deliberately **no public sign-up route**. Accounts are seeded. A screening
-tool that lets anyone create an account is a tool that lets anyone see fundus
-images.
+**Sign-up is open**, and it is safe because of BR-1 rather than in spite of it: a
+new account opens onto its own work and returns 404 for everyone else's. A
+hospital would provision accounts instead; open sign-up is right for a demo and
+wrong for a clinic, and knowing the difference is the point.
+
+Signing in from a browser the account has not used sends an approval link. The
+**Trust this browser for 30 days** box decides both how long the session lasts
+and whether the browser is remembered at all; signing out ends both.
 
 ---
 
@@ -229,7 +253,7 @@ web/
     landing/              the public page — landing.css is scoped to .rx-landing
     pages/                Login · Cases · NewCase · CaseDetail
 server/
-  server.js               routes, auth, the four business rules
+  server.js               routes, auth, the eight business rules
   db.js                   schema, grade labels
   ai.js                   the call to the grading service
   seed.js                 two demo doctors
@@ -239,11 +263,10 @@ server/
 ai/
   main.py                 /infer and /health
   requirements.txt
-render.yaml               legacy Render blueprint — superseded, see DEPLOY.md
 SETUP.md                  step-by-step first-run guide (Windows + the DGX)
-KNOWN-ISSUES.md           open items, with what a fix would touch
 DEPLOY.md                 step-by-step deployment runbook
-COMMITS.md                suggested commit sequence, split across the team
+docs/OPERATIONS.md        what to do when something is down — read this first
+KNOWN-ISSUES.md           open items, with what a fix would touch
 tools/
   sample_aptos.py         pull a balanced sample out of the APTOS set
   status.sh               "is RetinaX up, and which build?" — any host
