@@ -269,7 +269,15 @@ export default function Login({ onSignedIn }) {
           <div className="card stack" style={{ padding: 26, gap: 16 }}>
             <div className="stack" style={{ gap: 5 }}>
               <div style={{ fontSize: 16, fontWeight: 600 }}>Approve this sign-in</div>
-              <div className="muted" style={{ fontSize: 13 }}>Click below to trust this browser for 30 days.</div>
+              {/* Opened from the emailed link, often in a different browser, so
+                  this screen cannot know whether the box was ticked - that choice
+                  lives on the verification row, server-side. It used to promise
+                  thirty days regardless, which was wrong every time the box was
+                  left clear. The heading and the button already say what to do,
+                  so this line only has to say why the email arrived. */}
+              <div className="muted" style={{ fontSize: 13 }}>
+                A sign-in was requested from a browser we do not recognise.
+              </div>
             </div>
             {error && <div className="err">{error}</div>}
             <button className="btn" type="button" disabled={busy} onClick={submitLoginVerify}>
