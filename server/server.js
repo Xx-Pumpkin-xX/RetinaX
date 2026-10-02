@@ -162,7 +162,15 @@ function sessionCookieOptions() {
   const cross = process.env.NODE_ENV === "production";
   return {
     httpOnly: true,
-    sameSite: cross ? "none" : "lax",
+    // Lax, not None. None was right when the browser called the tunnel directly
+    // and the cookie was genuinely cross-site. Since the Pages Function began
+    // proxying /api, the browser only ever talks to one origin, so the cookie is
+    // first-party and Lax works - while also refusing to ride along on a POST
+    // from somebody else's page, which is the CSRF this once allowed.
+    //
+    // If the proxy is ever removed and the browser calls the API host directly,
+    // this has to go back to "none" or every session breaks.
+    sameSite: "lax",
     secure: cross,
     path: "/",
   };
