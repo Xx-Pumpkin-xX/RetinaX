@@ -35,9 +35,39 @@ export async function onRequest(context) {
   // Carry the method, body and headers through unchanged. Passing `request`
   // as the init keeps the body a stream, so a 12 MB fundus upload is not
   // buffered in the worker.
+  // This proxy is the LAST place the browser's real Origin is visible: the line
+  // below overwrites it, and the API has no Origin check of its own. So a
+  // cross-site write has to be refused here or it is never refused at all.
+  //
+  // The session cookie is SameSite=None, which means the browser attaches it to
+  // cross-site requests too. A multipart POST is a CORS-"simple" request, so it
+  // is sent without a preflight and reaches the API fully authenticated. That is
+  // textbook CSRF, and this block is what closes it.
+  //
+  // Only an explicit signal counts as evidence. A missing Origin and a missing
+  // Sec-Fetch-Site are normal on same-origin navigations, so absence is allowed
+  // through; only a header that positively says "another site" is refused.
+  const method = request.method.toUpperCase();
+  if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+    const site = request.headers.get("sec-fetch-site");
+    const browserOrigin = request.headers.get("origin");
+    const crossSite = site
+      ? (site !== "same-origin" && site !== "same-site" && site !== "none")
+      : Boolean(browserOrigin && browserOrigin !== url.origin);
+    if (crossSite) {
+      return new Response(
+        JSON.stringify({
+          error: "This request did not come from the RetinaX.ai site.",
+          code: "CROSS_SITE_BLOCKED",
+        }),
+        { status: 403, headers: { "content-type": "application/json" } }
+      );
+    }
+  }
+
   const proxied = new Request(target, request);
-  // The API compares Origin against WEB_ORIGIN. Send the site's own origin
-  // rather than whatever the browser put there.
+  // Send the site's own origin rather than whatever the browser put there, so
+  // the API sees one consistent value. The check above is what makes this safe.
   proxied.headers.set("origin", url.origin);
   proxied.headers.delete("host");
 
