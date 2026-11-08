@@ -1,343 +1,262 @@
-# RetinaX.ai
+<h1 align="center">RetinaX.ai</h1>
 
-Diabetic retinopathy screening support for ophthalmologists. A doctor uploads a
-fundus photograph, a grading model returns a DR grade (0–4) and an explanation
-heatmap, and the doctor agrees with it or overrides it. **The doctor's answer is
-the diagnosis of record — the model never overwrites it, and the model's own
-grade is never overwritten either.** Both are kept, side by side, forever.
+<p align="center">
+  <b>Explainable diabetic retinopathy screening support for ophthalmologists.</b><br>
+  The AI proposes a grade and shows its evidence. The doctor decides.
+</p>
 
-That last sentence is the whole product. Everything below serves it.
+<p align="center">
+  <a href="https://retinax.pages.dev"><b>Live demo</b></a> ·
+  <a href="https://github.com/JayNguyen0505-es/DR-CCEM"><b>Research code (DR-CCEM)</b></a> ·
+  <a href="#run-it-locally">Run locally</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#license">License</a>
+</p>
 
-<!-- Replace with a screenshot of the case-detail screen once deployed. -->
+<p align="center">
+  🏆 <b>First Prize, USTH Student Scientific Research Competition 2026</b><br>
+  Built on the research project <i>Lesion-Aware Explainable AI Diabetic Retinopathy Grading on Fundus Images</i>,
+  with the Analytics Everywhere Lab (University of New Brunswick) and USTH.
+</p>
+
+<table align="center">
+  <tr>
+    <td align="center"><img src="web/public/assets/demo-fundus.jpg" width="240" alt="Fundus photograph"><br><sub>Fundus photograph</sub></td>
+    <td align="center"><img src="web/public/assets/demo-gradcam.jpg" width="240" alt="Grad-CAM++ map"><br><sub>Grad-CAM++ (on upload)</sub></td>
+    <td align="center"><img src="web/public/assets/demo-ccem.jpg" width="240" alt="CCEM map"><br><sub>CCEM (proposed method)</sub></td>
+  </tr>
+</table>
+
+> [!WARNING]
+> **RetinaX.ai is not a medical device** and must not be used to diagnose, screen or treat anyone. It is research, education and demonstration software. Every AI grade must be confirmed by a qualified clinician. The full clinical disclaimer is in [NOTICE](NOTICE).
 
 ---
 
-## What it is not
+## Two repositories, one project
 
-It is not a diagnostic device. Every screen where the model has a voice carries
-the same line: *decision support only, the AI can be wrong, every grade must be
-confirmed by a clinician before it is used.* No patient names are stored — only
-a patient code and a birth year. All images used in development come from the
-public APTOS 2019 / EyePACS datasets.
+| Repository | What it holds |
+|---|---|
+| **[DR-CCEM](https://github.com/JayNguyen0505-es/DR-CCEM)** | The research: the three-stage training pipeline for the grading model, the CCEM explanation method, and the explanation benchmark against expert lesion masks. |
+| **RetinaX** (this repo) | The application that puts that research in front of a doctor: web app, API, case workflow, and a model service that loads the DR-CCEM code at runtime. |
 
----
+RetinaX does not copy the research code. Its model service imports the grading model, preprocessing, explainers and CCEM fusion directly from a DR-CCEM checkout (see [Using the real model](#using-the-real-model)), so the app always runs the same code the results were measured with.
 
-## The two halves of the front end
+## What it does
 
-`/` is a **public landing page** — hero, about, features, workflow, research
-figures, affiliations. It came from the team's first demo and carries its own
-light palette, scoped entirely under `.rx-landing` so it cannot reach the themed
-application. Everything else requires a session and redirects to `/login`.
+A doctor uploads a fundus photograph. The model service returns a **DR grade (0–4)** on the International Clinical DR scale, an **explanation heatmap** and **lesion marks**. The doctor then agrees, or overrides the grade with a written reason.
 
-That split is deliberate: the landing is marketing and answers to nobody but the
-reader; the application behind it answers to the class diagram and the four
-business rules.
+**The doctor's answer is the diagnosis of record. The model never overwrites it, and the model's own grade is never overwritten either.** Both are kept side by side, and every disagreement becomes a training signal for the next model version.
+
+- **Ordinal DR grading.** EfficientNet-B7 (Noisy Student) + CBAM regression model, with three-view test-time augmentation and Nelder-Mead-optimised thresholds that turn the score into a grade.
+- **Two explanation maps.** Grad-CAM++ appears instantly on upload. **CCEM** (Consensus-Calibrated Explanation Map), the project's proposed method, is computed after it.
+- **Lesion localisation** for six lesion types (MA, HE, EX, SE, IRMA, NV) using separate lesion models trained on FGADR. NV is shown as "not assessed" because its recall is not yet credible.
+- **Fundus gate.** A CLIP-based check rejects images that are not fundus photographs before they reach the grader.
+- **Case assistant.** A local LLM (via Ollama) can discuss a case with the doctor but has **no write path**. Clinician notes are fenced so they cannot act as prompt injection.
+- **Doctor accounts** with email confirmation, approval of new browsers, password reset, rate limiting, and hashed, expiring tokens.
+- **Light and dark themes**, with severity colours reserved for the DR grade only.
+
+## The research behind it
+
+The full method, training scripts and evaluation live in **[DR-CCEM](https://github.com/JayNguyen0505-es/DR-CCEM)**. In short:
+
+**Grading model.** Trained in three stages: pre-training on EyePACS 2015, fine-tuning on APTOS 2019 and Messidor-2, then attention-guided fine-tuning in which MAPLES-DR expert lesion masks supervise the CBAM module.
+
+| Grading metric | Value |
+|---|---|
+| APTOS 2019 validation QWK | **0.93** |
+| Kaggle private leaderboard QWK | **0.92** |
+
+<sub>QWK = quadratic weighted kappa. These come from the research model on public datasets and say nothing about performance on any real clinic's images.</sub>
+
+**CCEM.** Single explanation methods disagree: Grad-CAM++ is coarse, Ada-SISE is sharp but narrow, SmoothIG is noisy. CCEM fuses all three into one map:
+
+1. resizes the three maps to a common grid and normalises them by percentile, so outlier pixels cannot dominate;
+2. scores each explainer's reliability **per image** (quick deletion faithfulness, agreement with the others, compactness, containment in the retina, peak dominance) and turns those scores into soft fusion weights;
+3. favours regions supported by more than one explainer without requiring all of them, and suppresses saliency outside the fundus;
+4. lightly smooths and filters the result, with fallbacks so a valid explanation is never erased.
+
+Expert lesion masks are used only to **evaluate** the fused map, never to build it. RetinaX runs CCEM in this `adaptive_reliability` mode.
+
+Explanation quality against MAPLES-DR expert lesion masks (DR-CCEM benchmark run):
+
+| Method | EBPG ↑ | SoftPG ↑ | P@1 ↑ | DPG ↓ | Deletion ↓ | Insertion ↑ | OA ↑ |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Grad-CAM++ | 5.86% | 43.19% | 2.96% | 0.422 | 0.6944 | **0.7038** | 0.0093 |
+| Ada-SISE | 3.46% | 30.18% | 2.96% | **0.130** | 0.6394 | 0.6456 | 0.0062 |
+| SmoothIG | **10.53%** | 56.83% | **8.71%** | 0.344 | 0.6437 | 0.6910 | 0.0474 |
+| **CCEM (adaptive)** | 9.19% | **68.03%** | 7.78% | 0.279 | **0.5719** | 0.6835 | **0.1117** |
+
+CCEM gives the best soft pointing score, the lowest deletion AUC and more than double the overall faithfulness (OA = insertion − deletion) of the best single method. Metric definitions and the exact setup are in the DR-CCEM README.
 
 ## Architecture
 
-Three processes, deliberately.
+Three processes, by design:
 
 ```
-web/      React 18 + Vite            the doctor's screens
-server/   Express + SQLite           accounts, cases, business rules
-ai/       FastAPI + PyTorch          the grading model (.pth), CAM / CCEM
+web/      React 18 + Vite        the doctor's screens and the public landing page
+server/   Express + SQLite       accounts, cases, business rules, assistant proxy
+ai/       FastAPI + PyTorch      grading model, explanation maps, lesion models, fundus gate
 ```
 
-The model lives behind its own HTTP service rather than inside the API. Two
-reasons: it is a Python model and the API is Node, and the regression score and
-the Nelder-Mead optimised thresholds must stay *inside* the model. The service
-returns a grade and explanation maps. Nothing else leaves it.
+The model runs behind its own HTTP service rather than inside the API: it is a Python model and the API is Node, and the regression score and thresholds must stay inside the model service. Only the grade, the explanation maps and the lesion regions leave it.
 
-**Two maps, not one.** Grad-CAM++ is a single backward pass, cheap enough to run
-on upload. CCEM fuses Grad-CAM++, Ada-SISE and SmoothIG — hundreds of passes,
-minutes rather than seconds — so it is produced by a batch run and can be absent
-on a freshly uploaded case. The case screen offers only the methods that case
-actually has, because a tab that quietly showed a different method's picture
-would make the whole explainability claim untrue.
+`/` is a public landing page, styled under `.rx-landing` so it cannot leak into the app. Every other route requires a session and redirects to `/login`.
 
-### Data model — eight tables, four of them the domain
+### Data model
 
-| Table | What it holds |
+| Table | Holds |
 |---|---|
-| `doctors` | account, bcrypt password hash, email-confirmation and reset token hashes |
-| `cases` | patient code, birth year, sex, eye, the image, status, and the current assessment |
-| `predictions` | the model's grade, its explanation maps, attention regions and lesion maps — **write-once** |
-| `reviews` | the assessment **history** — an amendment appends, never overwrites |
-| `trusted_devices` · `login_verifications` · `revoked_sessions` · `auth_attempts` | sessions and rate limiting. Every token is stored as a SHA-256 hash and every row expires |
+| `doctors` | account, bcrypt password hash, hashed confirmation and reset tokens |
+| `cases` | patient code, birth year, sex, eye, image, status and the current assessment |
+| `predictions` | the model's grade, explanation maps, attention regions and lesion maps. **Write-once.** |
+| `reviews` | the full assessment history. An amendment appends; it never overwrites. |
+| `trusted_devices`, `login_verifications`, `revoked_sessions`, `auth_attempts` | sessions and rate limiting. Every token is stored as a SHA-256 hash and every row expires. |
 
-`cases` keeps the *current* assessment alongside `reviews` on purpose: the
-worklist is then one query. `reviews` is the record of how it got there.
+No patient names are stored, only a patient code and a birth year.
 
-`predictions.Grade` is never updated. A doctor who disagrees writes
-`cases.CorrectedGrade` and `cases.Reason`; the model's grade stays visible next
-to it. Disagreements are the training signal for the next model version.
+### Business rules
 
-### The eight business rules the code actually enforces
-
-| | Rule | Where |
+| | Rule | Enforced in |
 |---|---|---|
-| BR-1 | A doctor can only reach their own cases. Another doctor's case returns **404, not 403** — 403 would confirm it exists. | `ownCase()` in `server/server.js` |
-| BR-2 | A case can only be marked once it has been graded (`409` otherwise). | `/api/cases/:id/mark` |
-| BR-3 | Disagreeing requires **both** a grade 0–4 **and** a written reason (`400` otherwise). | `/api/cases/:id/mark` |
-| BR-4 | The doctor's correction never touches `predictions.Grade`. | the `UPDATE` only names `cases` columns |
+| BR-1 | A doctor can only reach their own cases. Another doctor's case returns **404, not 403**, so its existence is not revealed. | `ownCase()` in `server/server.js` |
+| BR-2 | A case can only be marked after it has been graded (`409`). | `POST /api/cases/:id/mark` |
+| BR-3 | Disagreeing requires **both** a grade 0–4 **and** a written reason (`400`). | `POST /api/cases/:id/mark` |
+| BR-4 | The doctor's correction never touches `predictions.Grade`. | the `UPDATE` names only `cases` columns |
 | BR-5 | One image per eye per patient code (`409 DUPLICATE_EYE`). | `eyeTaken()` |
-| BR-6 | Year of birth and sex describe the patient, not the photograph (`409 PATIENT_MISMATCH`). | `patientIdentity()` |
-| BR-7 | A reviewed case cannot be deleted without an explicit confirmation (`428`). | `DELETE /api/cases/:id` |
-| BR-8 | The assistant has no write path — neither chat route touches SQL. | `server/chat.js`, `ai/main.py` |
+| BR-6 | Birth year and sex describe the patient, not the photograph (`409 PATIENT_MISMATCH`). | `patientIdentity()` |
+| BR-7 | A reviewed case cannot be deleted without explicit confirmation (`428`). | `DELETE /api/cases/:id` |
+| BR-8 | The assistant has no write path. Neither chat route touches SQL. | `server/chat.js`, `ai/main.py` |
 
----
+## Run it locally
 
-## Running it locally
-
-**`SETUP.md` is the step-by-step guide, written for Windows.** The short version,
-three terminals:
+Requirements: **Python 3.10+**, **Node.js 20.12+**. A GPU is optional. Without real weights the AI service runs a stand-in model, so the whole stack still works end to end.
 
 ```bash
-# 1 — the grading service
+# 1. Model service
 cd ai
 pip install -r requirements.txt
 uvicorn main:app --port 8000
 
-# 2 — the API
+# 2. API
 cd server
 npm install
-copy .env.example .env    # set JWT_SECRET; cp on macOS/Linux
+cp .env.example .env      # set JWT_SECRET to a long random string
 npm run seed              # creates two demo doctors
 npm run dev               # http://localhost:3000
 
-# 3 — the front end
+# 3. Front end
 cd web
 npm install
-npm run dev           # http://localhost:5173
+npm run dev               # http://localhost:5173
 ```
 
-Sign in as `quang@retinax.ai` / `retinax123` (or `ha@retinax.ai`, same password).
+Sign in with a seeded demo account: `quang@retinax.ai` / `retinax123`.
 
-### Wiring in the real model
+[SETUP.md](SETUP.md) is the full first-run guide (Windows and DGX Spark).
 
-`ai/main.py` ships with a working stand-in so the stack runs end to end before
-the weights are in place. Put `model.pth` in `ai/`, then fill in the two marked
-blocks:
+### Using the real model
 
-```python
-def load_model():   # TODO: torch.load your .pth, .eval(), return it
-def predict(img):   # TODO: your transform, forward pass, CAM / CCEM
+`ai/dr_adapter.py` loads the research model from a **DR-CCEM** checkout when these variables are set, and falls back to the stand-in when they are not:
+
+```bash
+git clone https://github.com/JayNguyen0505-es/DR-CCEM.git
+export DR_REPO=$PWD/DR-CCEM
+export MODEL_PATH=/path/to/stage2_best_model.pth       # trained in DR-CCEM
+export THRESHOLD_PATH=/path/to/best_thresholds.npy     # from the same training run
 ```
 
-`THRESHOLDS = [0.57, 1.48, 2.51, 3.42]` are the Nelder-Mead cut points that turn
-the regression output into a grade. Replace them with yours. `/health` reports
-`model_loaded` so you can see at a glance whether the real weights are live.
+The adapter imports `model`, `preprocessing`, the three explainers and `ccem_core` from DR-CCEM's `src/` tree. Model weights and datasets are not included in either repository; the grading model is trained with DR-CCEM's pipeline.
 
----
+`GET /health` on the model service reports `model_loaded` and where the thresholds came from. If `thresholds_source` says the thresholds are unfitted, grades are coming from naive rounding and are miscalibrated. See [ai/README.md](ai/README.md) for benchmarking and GPU notes.
 
 ## Deployment
 
-**[DEPLOY.md](DEPLOY.md) is the runbook. Read its first section before running
-anything** — every command is labelled with the machine it belongs on, and most
-mistakes on this project have been the right command on the wrong machine.
-
-The shape, in one table:
-
-| Machine | Runs | Deployed by |
-|---|---|---|
-| **`prts`** (your Windows PC) | git, the source of truth | nothing serves here |
-| **Cloudflare Pages** | the React front end, `retinax.pages.dev` | automatically, on every push to `main` |
-| **`prts-0`** (always-on Linux) | the API `:3000`, SQLite, the uploaded images | `tools/build-server-tar.sh` → upload → unpack |
-| **`spark-063e`** (DGX Spark) | the grading model `:8000`, the `.pth`, the GPU | rarely; only when `ai/` changes |
-
-A request goes: browser → Pages → a Pages Function proxying `/api/*` → the tunnel
-→ `prts-0` → (only on upload) the Spark, over Tailscale.
-
-Three things that are load-bearing and non-obvious:
-
-- **The `/api/*` proxy is not an optimisation.** Without it the page and the API
-  are on different origins, so the session cookie is third-party — blocked by
-  Safari always, Firefox by default, Chrome in incognito. Login appears to
-  succeed (the name came back in the body) and every later request is 401.
-- **`VITE_API_URL` must stay unset in Pages.** `src/api.js` falls back to `""`,
-  which makes calls same-origin so the proxy picks them up. Setting it bypasses
-  the proxy and brings the cookie bug back. `API_ORIGIN` is the variable that
-  matters, and it points at the tunnel in front of `prts-0`.
-- **The data lives only on `prts-0`.** The database and every uploaded image are
-  under `$VAR_DIR` there. The deploy tar deliberately excludes them, so unpacking
-  over a running install cannot destroy them — the build script checks the packed
-  archive rather than trusting its own exclude list.
-
-This replaced an earlier Render deployment, whose free instance wiped its disk on
-every restart and took the uploads with it. Do not put the API back on a host
-with ephemeral storage.
-
-`server/demo-images/` **is** committed on purpose — it is the only thing a fresh
-instance can re-seed itself from, so it must hold public-dataset images and never
-real patient photographs. `.gitignore` keeps `node_modules/`, the database, the
-uploads, the `.pth`, every `.env` and the deploy tars out of the repo.
-
----
-
-## API
-
-All routes require the session cookie except login and the password-reset pair.
-
-| Method | Route | |
-|---|---|---|
-| `POST` | `/api/signup` | `{fullName, email, password}` — sends a confirmation link |
-| `GET` | `/api/email/verify` | confirms the address **and** trusts that browser |
-| `POST` | `/api/email/resend` | same answer whether or not the address exists |
-| `POST` | `/api/login` | `{email, password, keepSignedIn}` — 403 until confirmed |
-| `GET` | `/api/login/verify` | approves a sign-in from an unrecognised browser |
-| `POST` | `/api/logout` | ends the session **and** this browser's trust |
-| `GET` | `/api/me` | |
-| `POST` | `/api/password/forgot` | always returns `{ok:true}` — see below |
-| `POST` | `/api/password/reset` | `{token, password}` — retires every existing session |
-| `GET` | `/api/cases` | the signed-in doctor's cases only |
-| `POST` | `/api/cases` | multipart: image + patient fields; grades on upload |
-| `GET` | `/api/cases/:id` | |
-| `DELETE` | `/api/cases/:id` | 428 + confirmation when the case is reviewed |
-| `POST` | `/api/cases/:id/mark` | `{agreement, correctedGrade?, reason?}` |
-| `POST` | `/api/cases/:id/details` | corrects patient details across that patient's eyes |
-| `POST` | `/api/cases/:id/regrade` · `/explain` | re-runs the model or redraws the map; never writes `Grade` |
-| `POST` | `/api/cases/:id/chat` | discuss the case with the assistant — **writes nothing** |
-| `POST` | `/api/chat` | help with using the application |
-| `GET` | `/api/cases/:id/image` · `/heatmap/:method` | |
-| `GET` | `/api/health` | build, database, model, assistant, mail |
-
-**Password reset.** The token is random, single-use and expires in 30 minutes.
-Only its SHA-256 hash is stored, so a leaked database cannot be turned back into
-working reset links. `/api/password/forgot` answers identically whether or not
-the address has an account — a different answer would tell an attacker which
-doctors are registered. Mail goes out through the Gmail API with OAuth2
-(`server/mail.js`); when it is not configured the link is written to the server
-log instead and the sign-in screen says so rather than promising an email that
-will never arrive.
-
-**Sign-up is open**, and it is safe because of BR-1 rather than in spite of it: a
-new account opens onto its own work and returns 404 for everyone else's. A
-hospital would provision accounts instead; open sign-up is right for a demo and
-wrong for a clinic, and knowing the difference is the point.
-
-Signing in from a browser the account has not used sends an approval link. The
-**Trust this browser for 30 days** box decides both how long the session lasts
-and whether the browser is remembered at all; signing out ends both.
-
----
-
-## Theme
-
-Light and dark, toggled in the header, remembered in `localStorage`, defaulting
-to the operating system setting. A small script in `index.html` applies the theme
-before first paint so there is no white flash.
-
-Colours are split into four roles that never borrow from each other:
-
-- **accent** (orange in light, cyan in dark) — actions only;
-- **severity** `--g0`–`--g4` — the DR grade, and nothing else;
-- **danger** — errors;
-- **notice** — the standing disclaimer, deliberately neutral, so that a permanent
-  banner never competes with a real warning.
-
----
-
-## Layout
-
-```
-web/
-  index.html              pre-paint theme script
-  vercel.json             SPA fallback (Vercel)
-  public/_redirects       SPA fallback (Netlify, Cloudflare Pages)
-  .env.example            VITE_API_URL
-  public/assets/          landing images (optimised: 9.6 MB -> 0.54 MB)
-  src/
-    App.jsx               routing, theme, header
-    api.js                every fetch, one place
-    styles.css            design tokens, both themes
-    landing/              the public page — landing.css is scoped to .rx-landing
-    pages/                Login · Cases · NewCase · CaseDetail
-server/
-  server.js               routes, auth, the eight business rules
-  db.js                   schema, grade labels
-  ai.js                   the call to the grading service
-  seed.js                 two demo doctors
-  seed-demo.js            demo cases from demo-images/, with fallback
-  precompute-demo.js      grade the demo images once, for that fallback
-  demo-images/            fundus images + precomputed/ answers (committed)
-ai/
-  main.py                 /infer and /health
-  requirements.txt
-SETUP.md                  step-by-step first-run guide (Windows + the DGX)
-DEPLOY.md                 step-by-step deployment runbook
-docs/OPERATIONS.md        what to do when something is down — read this first
-KNOWN-ISSUES.md           open items, with what a fix would touch
-tools/
-  sample_aptos.py         pull a balanced sample out of the APTOS set
-  status.sh               "is RetinaX up, and which build?" — any host
-  build-server-tar.sh     pack the API for prts-0, stamped with its commit
-LICENSE                   Apache License 2.0
-NOTICE                    attributions, dataset terms, clinical disclaimer
-```
-
----
-
-## Checking that it is up
-
-Both services keep running inside tmux, so closing the JupyterLab terminal does
-not stop them. To see the state of everything from either machine, in a terminal
-or in a notebook cell:
-
-```bash
-bash tools/status.sh          # from a terminal
-!bash ~/tools/status.sh               # from a notebook cell on prts-0
-```
-
-It reports the tmux sessions, what is bound to :8000 and :3000, the model's
-`/health`, the API's `/api/health`, the other machine across Tailscale, and the
-public tunnel. It exits non-zero when something did not answer, so a notebook
-cell shows a red mark. It changes nothing and needs no root.
-
-**It also tells you which build the API is running**, which used to be
-unanswerable — `tools/build-server-tar.sh` stamps the version, commit and build
-time into the tar, and `/api/health` reports them back:
-
-```
-which build is the API running
-     version  v1.0.0
-     commit   3807b12 on main
-     built    2026-09-13T02:31:44Z   (deployed by tar)
-```
-
-Run it from a git checkout and it compares that commit against your HEAD, so
-"is prts-0 running what I just pushed?" stops being a guess.
-
-The two fields worth reading every time:
-
-| field | what a bad value means |
+| Component | Runs on |
 |---|---|
-| `model_loaded: false` | the checkpoint did not load — existing cases still open, new uploads fail |
-| `thresholds_source: default` | `best_thresholds.npy` was not found, so grades come from naive rounding and are wrong in one direction |
+| Front end | **Cloudflare Pages** (`retinax.pages.dev`), rebuilt on every push to `main` |
+| API, SQLite, uploaded images | an always-on Linux host, behind a Cloudflare tunnel |
+| Grading model and GPU | an NVIDIA DGX Spark, reached over Tailscale |
 
-To start whatever is missing:
+Request path: browser → Pages → Pages Function proxying `/api/*` → tunnel → API → (on upload only) the model service.
 
-```bash
-bash server/run-on-host.sh start     # on prts-0
-bash ai/run-on-dgx.sh   start        # on the Spark
+Two things to know before changing anything:
+
+- **The `/api/*` proxy is required, not an optimisation.** Without it the session cookie is third-party, and Safari, Firefox and incognito Chrome block it: login looks successful, then every request returns 401. Keep `VITE_API_URL` unset in Pages and set `API_ORIGIN` instead.
+- **Never host the API on ephemeral storage.** The database and uploads live only on the API host and are excluded from the deploy archive on purpose.
+
+Runbooks: [DEPLOY.md](DEPLOY.md) for deploying, [docs/OPERATIONS.md](docs/OPERATIONS.md) for incidents, and `bash tools/status.sh` to check every service and which commit is running.
+
+## API overview
+
+All routes need the session cookie except sign-up, login and password reset.
+
+| Method | Route | Purpose |
+|---|---|---|
+| `POST` | `/api/signup`, `/api/login`, `/api/logout` | account and session |
+| `GET` | `/api/email/verify`, `/api/login/verify` | confirm an address, approve a new browser |
+| `POST` | `/api/password/forgot`, `/api/password/reset` | single-use, 30-minute reset token; same answer whether or not the address exists |
+| `GET` / `POST` | `/api/cases` | list own cases / upload a new one (graded on upload) |
+| `GET` / `DELETE` | `/api/cases/:id` | view / delete (`428` if reviewed) |
+| `POST` | `/api/cases/:id/mark` | `{agreement, correctedGrade?, reason?}` |
+| `POST` | `/api/cases/:id/details` | correct patient details across that patient's eyes |
+| `POST` | `/api/cases/:id/regrade`, `/explain` | re-run the model or redraw a map; never writes `Grade` |
+| `POST` | `/api/cases/:id/chat`, `/api/chat` | case discussion and app help; **writes nothing** |
+| `GET` | `/api/cases/:id/image`, `/heatmap/:method` | images and maps |
+| `GET` | `/api/health` | build, database, model, assistant and mail status |
+
+## Repository layout
+
+```
+web/                    React front end
+  src/landing/          public landing page (scoped CSS)
+  src/pages/            Login · Cases · NewCase · CaseDetail
+  functions/api/        Cloudflare Pages Function proxying /api/*
+server/                 Express API: routes, auth, business rules, mail, assistant proxy
+  demo-images/          public-dataset demo images + precomputed results (never real patients)
+ai/                     FastAPI service: grading, CAM/CCEM via DR-CCEM, lesion models, fundus gate
+tools/                  deploy archives, status checks, backups, seeding, dataset sampling
+docs/OPERATIONS.md      what to do when something is down
+SETUP.md · DEPLOY.md    first-run guide and deployment runbook
+KNOWN-ISSUES.md         open items and resolved issues
+LICENSE · NOTICE        Apache-2.0, attributions, dataset terms, clinical disclaimer
 ```
 
-Which command belongs on which machine — and how a deploy actually works — is in
-[DEPLOY.md](DEPLOY.md). Read its first section before running anything; most
-mistakes on this project have been the right command on the wrong machine.
+## Data
 
----
+No real patient images are in this repository, and none may be added. The project used these public datasets, none of which is redistributed here; each remains under its own terms:
 
-## Licence
+| Dataset | Used for |
+|---|---|
+| APTOS 2019, EyePACS 2015, Messidor-2 | training and validating the grading model (in DR-CCEM); demo images |
+| MAPLES-DR | expert lesion masks for attention supervision and explanation benchmarks (in DR-CCEM) |
+| FGADR | training the six lesion models (in `ai/`), under a signed data-use agreement |
 
-Apache License 2.0 — see [LICENSE](LICENSE).
+Sources and citation requirements are in [NOTICE](NOTICE).
 
-Apache-2.0 rather than MIT for two reasons that matter for research code: it
-grants patent rights explicitly, and it requires anyone distributing a modified
-version to say that they changed it. Both protect you and the next reader.
+## Known limitations
 
-[NOTICE](NOTICE) carries the third-party attributions, the terms of the public
-datasets used in development, the papers behind the architecture and the
-explanation methods, and — first, in full — the clinical disclaimer. **RetinaX.ai
-is not a medical device and must not be used to diagnose anyone.** Every OSI
-licence disclaims warranty; none of them says that sentence. For this project it
-belongs in the repository, not only on the screen.
+- Lesion marks have been checked by eye on a handful of cases, not measured against ground-truth masks.
+- The model has not been validated on cameras, populations or acquisition conditions outside the public datasets.
+- The demo deployment depends on a single quick tunnel and has no off-machine backup yet.
+
+Details and the history of fixed issues are in [KNOWN-ISSUES.md](KNOWN-ISSUES.md).
+
+## Authors
+
+- **Nguyen Hai Phong** · [@Xx-Pumpkin-xX](https://github.com/Xx-Pumpkin-xX)
+- **Nguyen Truong Thinh** · [@JayNguyen0505-es](https://github.com/JayNguyen0505-es)
+
+Developed at the University of Science and Technology of Hanoi (USTH), in collaboration with the [Analytics Everywhere Lab](https://www.cs.unb.ca/~hcao3/), University of New Brunswick.
+
+## License
+
+Copyright © 2026 [Nguyen Hai Phong](https://github.com/Xx-Pumpkin-xX) and [Nguyen Truong Thinh](https://github.com/JayNguyen0505-es).
+
+The source code in **this repository** is licensed under the **Apache License, Version 2.0**. See [LICENSE](LICENSE). You may use, modify and redistribute it, including commercially, provided you keep the copyright and license notices, state the changes you made, and ship the [NOTICE](NOTICE) file with any redistribution. Apache-2.0 was chosen over MIT because it grants patent rights explicitly and requires modified versions to say what changed.
+
+What this license does **not** cover:
+
+- **The DR-CCEM research code** is a separate repository under its own terms. Apache-2.0 here grants no rights to it.
+- **Model weights** are not distributed and not licensed. The lesion models are derived from FGADR under a data-use agreement and must never be published.
+- **Datasets and demo images** remain under the terms of their original providers (APTOS 2019, EyePACS, Messidor-2, MAPLES-DR, FGADR).
+- **Clinical use.** The license grants no right to use this software on patients. RetinaX.ai is provided as is, without warranty, under Sections 7 and 8 of the license. See the clinical disclaimer in [NOTICE](NOTICE).
