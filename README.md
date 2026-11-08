@@ -252,11 +252,11 @@ Developed at the University of Science and Technology of Hanoi (USTH), in collab
 
 Copyright © 2026 [Nguyen Truong Thinh](https://github.com/JayNguyen0505-es) and [Nguyen Hai Phong](https://github.com/Xx-Pumpkin-xX).
 
-The source code in **this repository** is licensed under the **Apache License, Version 2.0**. See [LICENSE](LICENSE). You may use, modify and redistribute it, including commercially, provided you keep the copyright and license notices, state the changes you made, and ship the [NOTICE](NOTICE) file with any redistribution. Apache-2.0 was chosen over MIT because it grants patent rights explicitly and requires modified versions to say what changed.
+This repository is published for portfolio and reference purposes; no license is granted to copy, modify or redistribute it without the authors' permission.
 
 What this license does **not** cover:
 
-- **The DR-CCEM research code** is a separate repository under its own terms. Apache-2.0 here grants no rights to it.
+- **The DR-CCEM research code** is a separate repository under its own terms.
 - **Model weights** are not distributed and not licensed. The lesion models are derived from FGADR under a data-use agreement and must never be published.
 - **Datasets and demo images** remain under the terms of their original providers (APTOS 2019, EyePACS, Messidor-2, MAPLES-DR, FGADR).
 - **Clinical use.** The license grants no right to use this software on patients. RetinaX.ai is provided as is, without warranty, under Sections 7 and 8 of the license. See the clinical disclaimer in [NOTICE](NOTICE).
