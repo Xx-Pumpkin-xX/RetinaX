@@ -243,14 +243,14 @@ Details and the history of fixed issues are in [KNOWN-ISSUES.md](KNOWN-ISSUES.md
 
 ## Authors
 
-- **Nguyen Hai Phong** · [@Xx-Pumpkin-xX](https://github.com/Xx-Pumpkin-xX)
 - **Nguyen Truong Thinh** · [@JayNguyen0505-es](https://github.com/JayNguyen0505-es)
+- **Nguyen Hai Phong** · [@Xx-Pumpkin-xX](https://github.com/Xx-Pumpkin-xX)
 
 Developed at the University of Science and Technology of Hanoi (USTH), in collaboration with the [Analytics Everywhere Lab](https://www.cs.unb.ca/~hcao3/), University of New Brunswick.
 
 ## License
 
-Copyright © 2026 [Nguyen Hai Phong](https://github.com/Xx-Pumpkin-xX) and [Nguyen Truong Thinh](https://github.com/JayNguyen0505-es).
+Copyright © 2026 [Nguyen Truong Thinh](https://github.com/JayNguyen0505-es) and [Nguyen Hai Phong](https://github.com/Xx-Pumpkin-xX).
 
 The source code in **this repository** is licensed under the **Apache License, Version 2.0**. See [LICENSE](LICENSE). You may use, modify and redistribute it, including commercially, provided you keep the copyright and license notices, state the changes you made, and ship the [NOTICE](NOTICE) file with any redistribution. Apache-2.0 was chosen over MIT because it grants patent rights explicitly and requires modified versions to say what changed.
 
